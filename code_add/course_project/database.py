@@ -8,11 +8,40 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from course_project.artifacts import alert_rows, gateway_summary_rows, stream_rows
-
-
 COURSE_ROOT = Path(__file__).resolve().parent
 DB_PATH = COURSE_ROOT / "course_project.sqlite3"
+
+
+def gateway_summary_rows(batch_report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for gateway_id, values in batch_report.get("gateway_summary", {}).items():
+        row = {"gateway_id": gateway_id}
+        row.update(values)
+        rows.append(row)
+    return rows
+
+
+def alert_rows(batch_report: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(batch_report.get("alerts", []))
+
+
+def stream_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(result.get("stream_snapshots", []), start=1):
+        rows.append(
+            {
+                "index": index,
+                "latest_batch": item.get("latest_batch"),
+                "latest_gateway": item.get("latest_gateway"),
+                "latest_device": item.get("latest_device"),
+                "latest_modes": json.dumps(item.get("latest_modes", []), ensure_ascii=False),
+                "recent_hot_prices": json.dumps(item.get("recent_hot_prices", []), ensure_ascii=False),
+                "recent_hit_rate": item.get("recent_hit_rate"),
+                "recent_avg_protocol_time_ms": item.get("recent_avg_protocol_time_ms"),
+                "recent_alert_count": item.get("recent_alert_count"),
+            }
+        )
+    return rows
 
 
 def utc_now_text() -> str:

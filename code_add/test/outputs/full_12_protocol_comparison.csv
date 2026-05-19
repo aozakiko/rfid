@@ -1,0 +1,13 @@
+﻿generation,role,protocol_name,parent_a,parent_b,source,pass_rate,accuracy,avg_time_ms,validator_passed,information_isolation_passed
+0,父代,ModeQuerySEM,,,base_protocol/ModeQuerySEM.py,100.0,1.0,164291.9375,True,True
+0,父代,ModeQueryTKQ,,,base_protocol/ModeQueryTKQ.py,100.0,1.0,30850.75,True,True
+0,父代,g2_2,,,multi_mode/generation2/g2_2.py,100.0,1.0,53670.1,True,True
+1,子代,test_g1_1,ModeQuerySEM,ModeQueryTKQ,test/generation_1/test_g1_1.py,100.0,1.0,292278.2875,True,True
+1,子代,test_g1_2,ModeQuerySEM,g2_2,test/generation_1/test_g1_2.py,100.0,1.0,1206141.35,True,True
+1,子代,test_g1_3,ModeQueryTKQ,g2_2,test/generation_1/test_g1_3.py,100.0,1.0,105166.825,True,True
+2,子代,test_g2_1,test_g1_3,test_g1_1,test/generation_2/test_g2_1.py,100.0,1.0,294968.3,True,True
+2,子代,test_g2_2,test_g1_3,test_g1_2,test/generation_2/test_g2_2.py,100.0,1.0,1416197.0,True,True
+2,子代,test_g2_3,test_g1_1,test_g1_2,test/generation_2/test_g2_3.py,50.0,0.5,1016635.425,True,True
+3,子代,test_g3_1,test_g2_1,test_g2_3,test/generation_3/test_g3_1.py,100.0,1.0,839278.5125,True,True
+3,子代,test_g3_2,test_g2_1,test_g2_2,test/generation_3/test_g3_2.py,100.0,1.0,627642.3,True,True
+3,子代,test_g3_3,test_g2_3,test_g2_2,test/generation_3/test_g3_3.py,50.0,0.5,1493394.0375,True,True

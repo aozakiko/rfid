@@ -1,0 +1,13 @@
+﻿protocol_name,accuracy,time,validator_passed,information_isolation_passed
+g2_2,1.0,53669.9875,True,True
+ModeQuerySEM,1.0,164292.0375,True,True
+ModeQueryTKQ,1.0,30850.675,True,True
+test_g1_1,1.0,292278.2875,True,True
+test_g1_2,1.0,1206141.1125,True,True
+test_g1_3,1.0,105166.6125,True,True
+test_g2_1,1.0,288035.9125,True,True
+test_g2_2,1.0,1416196.9375,True,True
+test_g2_3,1.0,933343.3125,True,True
+test_g3_1,1.0,839278.4625,True,True
+test_g3_2,1.0,627642.3625,True,True
+test_g3_3,0.0,1493158.2,True,True

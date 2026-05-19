@@ -30,14 +30,15 @@ def main() -> None:
         print(f"[error] Empty CSV: {csv_path}")
         return
 
-    df = df.sort_values(["accuracy", "time"], ascending=[False, True]).head(8)
+    df = df.sort_values(["accuracy", "time"], ascending=[False, True])
     labels = df["protocol_name"].astype(str).tolist()
     x = range(len(labels))
 
     plt.rcParams["font.sans-serif"] = ["SimHei", "Arial"]
     plt.rcParams["axes.unicode_minus"] = False
 
-    fig, ax_time = plt.subplots(figsize=(9, 5.2))
+    fig_width = max(9.0, 0.68 * len(labels) + 3.5)
+    fig, ax_time = plt.subplots(figsize=(fig_width, 5.4))
     bars = ax_time.bar(x, df["time"], color="#2563eb", alpha=0.78, label="Avg time (ms)")
     ax_time.set_ylabel("Average execution time (ms)")
     ax_time.set_xlabel("Protocol")
@@ -60,8 +61,11 @@ def main() -> None:
     fig.tight_layout()
 
     output_path = output_dir / f"final_protocol_performance_{args.scene}.pdf"
+    png_output_path = output_dir / f"final_protocol_performance_{args.scene}.png"
     plt.savefig(output_path, dpi=300)
+    plt.savefig(png_output_path, dpi=220)
     print(f"Final comparison chart saved to: {output_path}")
+    print(f"Final comparison PNG saved to: {png_output_path}")
     if args.no_show:
         plt.close(fig)
     else:

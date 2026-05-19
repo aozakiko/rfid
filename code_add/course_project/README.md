@@ -23,7 +23,7 @@ http://127.0.0.1:8765
 - Prompt 与 AI：单次协议生成页，只选择父代 A/B；支持任务画像、可选自然语言约束、模型探测、异步进度、Prompt 预览和协议代码生成。
 - 验证沙箱：保留单协议验证，覆盖任务烟测、物理约束检查、信息隔离静态扫描和运行结果 JSON。
 - 自动迭代：父代池只在本页出现；支持父代池组合、多轮 Prompt/协议生成、实时进度条、步骤卡片、日志、轮次表和本页内协议预览。
-- Outputs：直接展示 `course_project/outputs` 下的 HTML、CSV、JSON、Markdown、日志、PDF、图片等产物。
+- Outputs：直接展示各场景 `outputs/` 目录以及平台产物目录下的 HTML、CSV、JSON、Markdown、日志、PDF、图片等产物。
 - Experiments：迁移原项目鲁棒性/敏感度实验、进化图和终稿图生成能力。
 - 审计：展示 SQLite 中的运行记录、AI 任务记录、系统计数和模型环境状态。
 

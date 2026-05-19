@@ -1,8 +1,0 @@
-{
-  "algorithm": "HMAC-SHA256",
-  "valid_message_accepted": true,
-  "tampered_payload_rejected": true,
-  "wrong_secret_rejected": true,
-  "missing_signature_rejected": true,
-  "passed": true
-}

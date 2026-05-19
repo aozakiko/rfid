@@ -1,0 +1,212 @@
+{
+  "test": {
+    "source": "test/generation*",
+    "task_profile": "mode_query",
+    "num_tags": 120,
+    "total_runs": 12,
+    "base_algorithms": [
+      {
+        "name": "g2_2",
+        "generation": 1,
+        "parent_A": null,
+        "parent_B": null,
+        "correction_count": 1,
+        "accuracy": 1.0,
+        "time": 53670.0729,
+        "validator_passed": true,
+        "information_isolation_passed": true,
+        "fitness": 0.9945
+      },
+      {
+        "name": "ModeQuerySEM",
+        "generation": 1,
+        "parent_A": null,
+        "parent_B": null,
+        "correction_count": 0,
+        "accuracy": 1.0,
+        "time": 164291.9854,
+        "validator_passed": true,
+        "information_isolation_passed": true,
+        "fitness": 0.9681
+      },
+      {
+        "name": "ModeQueryTKQ",
+        "generation": 1,
+        "parent_A": null,
+        "parent_B": null,
+        "correction_count": 0,
+        "accuracy": 0.6667000000000001,
+        "time": 30850.8188,
+        "validator_passed": true,
+        "information_isolation_passed": true,
+        "fitness": 0.7834
+      }
+    ],
+    "generations": [
+      {
+        "generation": 1,
+        "individuals": [
+          {
+            "name": "g2_2",
+            "generation": 1,
+            "parent_A": null,
+            "parent_B": null,
+            "correction_count": 1,
+            "accuracy": 1.0,
+            "time": 53670.0729,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.9945
+          },
+          {
+            "name": "ModeQuerySEM",
+            "generation": 1,
+            "parent_A": null,
+            "parent_B": null,
+            "correction_count": 0,
+            "accuracy": 1.0,
+            "time": 164291.9854,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.9681
+          },
+          {
+            "name": "ModeQueryTKQ",
+            "generation": 1,
+            "parent_A": null,
+            "parent_B": null,
+            "correction_count": 0,
+            "accuracy": 0.6667000000000001,
+            "time": 30850.8188,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.7834
+          }
+        ]
+      },
+      {
+        "generation": 2,
+        "individuals": [
+          {
+            "name": "test_g1_3",
+            "generation": 2,
+            "parent_A": "ModeQueryTKQ",
+            "parent_B": "g2_2",
+            "correction_count": 1,
+            "accuracy": 1.0,
+            "time": 105166.7604,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.9822
+          },
+          {
+            "name": "test_g1_1",
+            "generation": 2,
+            "parent_A": "ModeQueryTKQ",
+            "parent_B": "g2_2",
+            "correction_count": 1,
+            "accuracy": 1.0,
+            "time": 292278.2604,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.9374
+          },
+          {
+            "name": "test_g1_2",
+            "generation": 2,
+            "parent_A": "ModeQueryTKQ",
+            "parent_B": "g2_2",
+            "correction_count": 1,
+            "accuracy": 1.0,
+            "time": 1206141.2625,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.7188
+          }
+        ]
+      },
+      {
+        "generation": 3,
+        "individuals": [
+          {
+            "name": "test_g2_1",
+            "generation": 3,
+            "parent_A": "test_g1_3",
+            "parent_B": "test_g1_1",
+            "correction_count": 1,
+            "accuracy": 1.0,
+            "time": 292657.4667,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.9374
+          },
+          {
+            "name": "test_g2_3",
+            "generation": 3,
+            "parent_A": "test_g1_3",
+            "parent_B": "test_g1_1",
+            "correction_count": 1,
+            "accuracy": 0.9167000000000001,
+            "time": 947225.2437,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.7266
+          },
+          {
+            "name": "test_g2_2",
+            "generation": 3,
+            "parent_A": "test_g1_3",
+            "parent_B": "test_g1_1",
+            "correction_count": 1,
+            "accuracy": 1.0,
+            "time": 1416196.7125,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.6685
+          }
+        ]
+      },
+      {
+        "generation": 4,
+        "individuals": [
+          {
+            "name": "test_g3_1",
+            "generation": 4,
+            "parent_A": "test_g2_1",
+            "parent_B": "test_g2_3",
+            "correction_count": 1,
+            "accuracy": 1.0,
+            "time": 869802.0125,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.7993
+          },
+          {
+            "name": "test_g3_2",
+            "generation": 4,
+            "parent_A": "test_g2_1",
+            "parent_B": "test_g2_3",
+            "correction_count": 1,
+            "accuracy": 0.8332999999999999,
+            "time": 614739.3563,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.7519
+          },
+          {
+            "name": "test_g3_3",
+            "generation": 4,
+            "parent_A": "test_g2_1",
+            "parent_B": "test_g2_3",
+            "correction_count": 1,
+            "accuracy": 0.6667000000000001,
+            "time": 1493629.7354,
+            "validator_passed": true,
+            "information_isolation_passed": true,
+            "fitness": 0.4334
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import importlib.util
@@ -25,32 +25,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from ai_protocol_optimizer import TASK_GUIDANCE, run_ai_optimization_workflow
 from backend_tools.openai_compatible import LLMConfig, OpenAICompatibleClient
-from cloud_edge_demo.pipeline import run_distributed_demo
 from prompt_generation import create_crossover_prompts
 from Validator import ProtocolValidator
-from course_project.artifacts import export_course_result, make_run_dir
-from course_project.benchmark import run_scalability_benchmark
-from course_project.dashboard import generate_dashboard
 from course_project.database import (
     database_stats,
-    get_design_case,
-    get_run_detail,
     init_database,
-    list_design_cases,
-    list_runs,
-    list_topology,
     store_ai_job,
-    store_course_run,
-    store_design_case,
-    store_security_check,
 )
-from course_project.platform_core import (
-    OPTIMIZATION_PRIORITIES,
-    SCENARIO_PRESETS,
-    TASK_LIBRARY,
-    build_design_case,
-)
-from course_project.security import run_security_check
 from course_project.selfopt_ui import INDEX_HTML as ADVANCED_INDEX_HTML
 
 
@@ -302,29 +283,31 @@ def _evolution_scenario_names() -> list[str]:
 
 
 def _output_artifact_rows(*, limit: int = 240) -> list[dict[str, Any]]:
-    output_root = COURSE_ROOT / "outputs"
+    output_roots = [COURSE_ROOT / "outputs"]
+    output_roots.extend(PROJECT_ROOT / scene / "outputs" for scene in discover_scenes())
     suffixes = {".csv", ".json", ".html", ".md", ".txt", ".log", ".pdf", ".png", ".svg"}
     rows: list[dict[str, Any]] = []
-    if not output_root.exists():
-        return rows
-    for file_path in output_root.rglob("*"):
-        if not file_path.is_file() or file_path.suffix.lower() not in suffixes:
+    for output_root in output_roots:
+        if not output_root.exists():
             continue
-        try:
-            rel = _relative_to_project(file_path)
-        except ValueError:
-            continue
-        run_name = file_path.parent.name if file_path.parent != output_root else "outputs"
-        rows.append(
-            {
-                "name": file_path.name,
-                "run": run_name,
-                "path": rel,
-                "size": file_path.stat().st_size,
-                "mtime": int(file_path.stat().st_mtime),
-                "kind": file_path.suffix.lower().lstrip(".") or "file",
-            }
-        )
+        for file_path in output_root.rglob("*"):
+            if not file_path.is_file() or file_path.suffix.lower() not in suffixes:
+                continue
+            try:
+                rel = _relative_to_project(file_path)
+            except ValueError:
+                continue
+            run_name = file_path.parent.name if file_path.parent != output_root else output_root.parent.name
+            rows.append(
+                {
+                    "name": file_path.name,
+                    "run": run_name,
+                    "path": rel,
+                    "size": file_path.stat().st_size,
+                    "mtime": int(file_path.stat().st_mtime),
+                    "kind": file_path.suffix.lower().lstrip(".") or "file",
+                }
+            )
     rows.sort(key=lambda row: row["mtime"], reverse=True)
     return rows[:limit]
 
@@ -1336,14 +1319,12 @@ def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
     total_runs = _coerce_int(payload, "total_runs", 2, 1, 20)
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    preferred = [
-        str(payload.get("protocols") or "").split(":", 1)[0],
-        "ModeQuerySEM",
-        "ModeQueryTCS",
-        "ModeQueryTKQ",
-        "ModeQueryEE",
-    ]
-    for name in preferred + discover_protocols(scene_name):
+    scene_protocols = [row["name"] for row in _protocol_file_rows(scene_name)]
+    selected = str(payload.get("protocols") or "").split(":", 1)[0]
+    candidate_names = ([selected] if selected else []) + scene_protocols
+    if not scene_protocols:
+        candidate_names.extend(discover_protocols(scene_name))
+    for name in candidate_names:
         if not name or name in seen:
             continue
         seen.add(name)
@@ -1358,8 +1339,6 @@ def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
         except Exception:
             continue
         rows.append({"protocol_name": name, **metrics})
-        if len(rows) >= 8:
-            break
     if not rows:
         raise ValueError(f"场景 {scene_name} 没有可执行协议，无法生成终稿图")
     import csv
@@ -1511,17 +1490,10 @@ def build_catalog() -> dict[str, Any]:
         "defaults": {
             "scene": default_scene,
             "protocol": default_protocol,
-            "devices": 4,
-            "gateways": 2,
-            "batches": 3,
             "num_tags": 80,
             "price_min": 1,
             "price_max": 200,
-            "stream_window": 4,
         },
-        "scenario_presets": SCENARIO_PRESETS,
-        "task_library": TASK_LIBRARY,
-        "optimization_priorities": OPTIMIZATION_PRIORITIES,
     }
 
 
@@ -1531,172 +1503,6 @@ def _coerce_int(payload: dict[str, Any], key: str, default: int, low: int, high:
     except (TypeError, ValueError):
         value = default
     return max(low, min(high, value))
-
-
-def normalize_run_config(payload: dict[str, Any]) -> dict[str, Any]:
-    catalog = build_catalog()
-    scene = str(payload.get("scene") or catalog["defaults"]["scene"])
-    if scene not in catalog["scenes"]:
-        raise ValueError(f"未知场景: {scene}")
-
-    protocol = str(payload.get("protocol") or catalog["defaults"]["protocol"])
-    if protocol not in catalog["protocols"].get(scene, []):
-        raise ValueError(f"场景 {scene} 中找不到协议: {protocol}")
-
-    price_min = _coerce_int(payload, "price_min", 1, 1, 100000)
-    price_max = _coerce_int(payload, "price_max", 200, 2, 100000)
-    if price_max <= price_min:
-        price_max = price_min + 1
-
-    gateways = _coerce_int(payload, "gateways", 2, 1, 12)
-    devices = _coerce_int(payload, "devices", 4, 1, 48)
-
-    return {
-        "scene": scene,
-        "protocol": protocol,
-        "devices": devices,
-        "gateways": min(gateways, devices),
-        "batches": _coerce_int(payload, "batches", 3, 1, 20),
-        "num_tags": _coerce_int(payload, "num_tags", 80, 20, 3000),
-        "price_min": price_min,
-        "price_max": price_max,
-        "stream_window": _coerce_int(payload, "stream_window", 4, 1, 50),
-        "shared_secret": str(payload.get("shared_secret") or "rfid-course-demo-secret"),
-        "include_security": bool(payload.get("include_security", True)),
-        "include_benchmark": bool(payload.get("include_benchmark", False)),
-        "dashboard": bool(payload.get("dashboard", True)),
-    }
-
-
-def run_course_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    config = normalize_run_config(payload)
-    started = time.perf_counter()
-    output_dir = make_run_dir()
-
-    result = run_distributed_demo(
-        scene=config["scene"],
-        protocol_name=config["protocol"],
-        device_count=config["devices"],
-        gateway_count=config["gateways"],
-        batch_count=config["batches"],
-        num_tags=config["num_tags"],
-        price_min=config["price_min"],
-        price_max=config["price_max"],
-        stream_window_size=config["stream_window"],
-        shared_secret=config["shared_secret"],
-    )
-
-    security_result = run_security_check(config["shared_secret"]) if config["include_security"] else None
-    benchmark_rows = None
-    if config["include_benchmark"]:
-        benchmark_rows = run_scalability_benchmark(
-            scene=config["scene"],
-            protocol_name=config["protocol"],
-            num_tags=max(20, min(config["num_tags"], 60)),
-            price_min=config["price_min"],
-            price_max=min(config["price_max"], max(config["price_min"] + 1, 160)),
-            stream_window_size=config["stream_window"],
-            shared_secret=config["shared_secret"],
-        )
-
-    paths = export_course_result(result, output_dir, security_result, benchmark_rows)
-    dashboard_path = None
-    if config["dashboard"]:
-        dashboard_path = generate_dashboard(
-            result,
-            output_dir / "dashboard.html",
-            security_result=security_result,
-            benchmark_rows=benchmark_rows,
-        )
-        paths["dashboard"] = dashboard_path
-
-    wall_clock_s = round(time.perf_counter() - started, 3)
-    run_id = store_course_run(
-        config=config,
-        result=result,
-        security_result=security_result,
-        benchmark_rows=benchmark_rows,
-        output_dir=output_dir,
-        dashboard_path=dashboard_path,
-        wall_clock_s=wall_clock_s,
-    )
-    detail = get_run_detail(run_id)
-    return {
-        "run_id": run_id,
-        "config": {key: value for key, value in config.items() if key != "shared_secret"},
-        "wall_clock_s": wall_clock_s,
-        "paths": {name: str(path) for name, path in paths.items()},
-        "detail": detail,
-    }
-
-
-def run_ai_dry_run(payload: dict[str, Any]) -> dict[str, Any]:
-    catalog = build_catalog()
-    scene = str(payload.get("scene") or catalog["defaults"]["scene"])
-    parent_a = str(payload.get("parent_a") or "g2_1")
-    parent_b = str(payload.get("parent_b") or "g2_2")
-    protocol_name = str(payload.get("protocol_name") or "g_course_ai_demo")
-    target_generation = str(payload.get("target_generation") or "next")
-
-    if scene not in catalog["scenes"]:
-        raise ValueError(f"未知场景: {scene}")
-    for parent in (parent_a, parent_b):
-        if parent not in catalog["protocols"].get(scene, []):
-            raise ValueError(f"场景 {scene} 中找不到父代协议: {parent}")
-    if not IDENTIFIER_RE.match(protocol_name):
-        raise ValueError("输出协议名必须是合法 Python 标识符")
-
-    logs: list[str] = []
-    result = run_ai_optimization_workflow(
-        scene_name=scene,
-        parent_a=parent_a,
-        parent_b=parent_b,
-        protocol_name=protocol_name,
-        target_generation=target_generation,
-        base_url=None,
-        model=None,
-        endpoint_path=None,
-        api_key_env="GEEK_API_KEY",
-        api_key_value=None,
-        temperature=0.2,
-        max_tokens=2800,
-        timeout_seconds=120,
-        validate_num_tags=80,
-        max_repair_rounds=0,
-        dry_run=True,
-        logger=logs.append,
-    )
-    request = {
-        "scene": scene,
-        "parent_a": parent_a,
-        "parent_b": parent_b,
-        "protocol_name": protocol_name,
-        "target_generation": target_generation,
-        "dry_run": True,
-    }
-    job_id = store_ai_job(request=request, result=result, logs=logs)
-    return {"job_id": job_id, "request": request, "result": result, "logs": logs}
-
-
-def analyze_design_case(payload: dict[str, Any]) -> dict[str, Any]:
-    catalog = build_catalog()
-    scene = str(payload.get("scene") or catalog["defaults"]["scene"])
-    if scene not in catalog["scenes"]:
-        raise ValueError(f"未知场景: {scene}")
-    available_protocols = catalog["protocols"].get(scene, [])
-    case = build_design_case(payload | {"scene": scene}, available_protocols)
-    case_id = store_design_case(case)
-    return {"case_id": case_id, "case": case}
-
-
-def preview_design_case(payload: dict[str, Any]) -> dict[str, Any]:
-    catalog = build_catalog()
-    scene = str(payload.get("scene") or catalog["defaults"]["scene"])
-    if scene not in catalog["scenes"]:
-        raise ValueError(f"未知场景: {scene}")
-    available_protocols = catalog["protocols"].get(scene, [])
-    case = build_design_case(payload | {"scene": scene}, available_protocols)
-    return {"case": case, "persisted": False}
 
 
 def json_response(handler: BaseHTTPRequestHandler, data: Any, status: int = 200) -> None:
@@ -1753,16 +1559,6 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 text_response(self, ADVANCED_INDEX_HTML)
             elif path == "/api/health":
                 json_response(self, {"ok": True, "project_root": str(PROJECT_ROOT)})
-            elif path == "/api/state":
-                json_response(
-                    self,
-                    {
-                        "catalog": build_catalog(),
-                        "runs": list_runs(12),
-                        "topology": list_topology(),
-                        "database": database_stats(),
-                    },
-                )
             elif path == "/api/selfopt/state":
                 json_response(self, selfopt_state())
             elif path == "/api/selfopt/artifacts":
@@ -1776,29 +1572,8 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/selfopt/file":
                 rel_path = query.get("path", [""])[0]
                 json_response(self, read_project_file(rel_path))
-            elif path == "/api/runs":
-                limit = int(query.get("limit", ["20"])[0])
-                json_response(self, {"runs": list_runs(limit)})
-            elif path.startswith("/api/runs/"):
-                run_id = int(path.rsplit("/", 1)[-1])
-                detail = get_run_detail(run_id)
-                if detail is None:
-                    json_response(self, {"error": "run not found"}, HTTPStatus.NOT_FOUND)
-                else:
-                    json_response(self, {"run": detail})
-            elif path == "/api/topology":
-                json_response(self, list_topology())
             elif path == "/api/database":
                 json_response(self, database_stats())
-            elif path == "/api/design/cases":
-                json_response(self, {"cases": list_design_cases(20)})
-            elif path.startswith("/api/design/cases/"):
-                case_id = int(path.rsplit("/", 1)[-1])
-                detail = get_design_case(case_id)
-                if detail is None:
-                    json_response(self, {"error": "design case not found"}, HTTPStatus.NOT_FOUND)
-                else:
-                    json_response(self, {"design_case": detail})
             else:
                 json_response(self, {"error": f"unknown path: {path}"}, HTTPStatus.NOT_FOUND)
         except Exception as exc:
@@ -1813,16 +1588,7 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         try:
             payload = read_json_body(self)
-            if path == "/api/runs":
-                json_response(self, run_course_from_payload(payload))
-            elif path == "/api/security":
-                shared_secret = str(payload.get("shared_secret") or "rfid-course-demo-secret")
-                result = run_security_check(shared_secret)
-                check_id = store_security_check(result)
-                json_response(self, {"check_id": check_id, "result": result, "database": database_stats()})
-            elif path == "/api/ai/dry-run":
-                json_response(self, run_ai_dry_run(payload))
-            elif path == "/api/selfopt/file":
+            if path == "/api/selfopt/file":
                 json_response(self, save_project_file(payload))
             elif path == "/api/selfopt/scene":
                 result = create_selfopt_scene(payload)
@@ -1848,10 +1614,6 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, {"job": start_background_task("auto_iterate", payload)})
             elif path == "/api/selfopt/experiments":
                 json_response(self, run_experiment_task(payload))
-            elif path == "/api/design/preview":
-                json_response(self, preview_design_case(payload))
-            elif path in ("/api/design/analyze", "/api/design/from-natural-language", "/api/design/prompt"):
-                json_response(self, analyze_design_case(payload))
             else:
                 json_response(self, {"error": f"unknown path: {path}"}, HTTPStatus.NOT_FOUND)
         except ValueError as exc:
@@ -1864,697 +1626,19 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             )
 
 
-INDEX_HTML = r"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RFID 云边端协同控制台</title>
-  <style>
-    :root {
-      --bg: #f5f7fb;
-      --surface: #ffffff;
-      --surface-2: #eef3f8;
-      --text: #17202a;
-      --muted: #667085;
-      --line: #d6dee8;
-      --blue: #2563eb;
-      --teal: #0f766e;
-      --green: #2f855a;
-      --orange: #b45309;
-      --red: #b42318;
-      --violet: #6d28d9;
-      --shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: Arial, "Microsoft YaHei", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-    button, input, select { font: inherit; }
-    .app {
-      display: grid;
-      grid-template-columns: 248px minmax(0, 1fr);
-      min-height: 100vh;
-    }
-    aside {
-      background: #111827;
-      color: #f9fafb;
-      padding: 18px 14px;
-      position: sticky;
-      top: 0;
-      height: 100vh;
-      overflow: auto;
-    }
-    .brand {
-      padding: 8px 8px 18px;
-      border-bottom: 1px solid rgba(255,255,255,0.16);
-      margin-bottom: 12px;
-    }
-    .brand strong { display: block; font-size: 18px; line-height: 1.35; }
-    .brand span { display: block; color: #cbd5e1; font-size: 12px; margin-top: 6px; line-height: 1.5; }
-    nav button {
-      width: 100%;
-      height: 42px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      border: 0;
-      border-radius: 8px;
-      padding: 0 10px;
-      color: #dbeafe;
-      background: transparent;
-      cursor: pointer;
-      text-align: left;
-      margin: 4px 0;
-    }
-    nav button.active, nav button:hover { background: #1f2937; color: #ffffff; }
-    nav svg { width: 18px; height: 18px; flex: 0 0 auto; }
-    main { padding: 22px 28px 44px; min-width: 0; }
-    header.top {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: flex-start;
-      margin-bottom: 18px;
-    }
-    h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: 0; }
-    h2 { margin: 0 0 14px; font-size: 18px; letter-spacing: 0; }
-    h3 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0; }
-    .muted { color: var(--muted); font-size: 13px; line-height: 1.55; }
-    .status {
-      min-width: 180px;
-      border: 1px solid var(--line);
-      background: var(--surface);
-      border-radius: 8px;
-      padding: 10px 12px;
-      box-shadow: var(--shadow);
-      font-size: 13px;
-    }
-    .dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 7px;
-      background: var(--green);
-    }
-    .dot.busy { background: var(--orange); }
-    .dot.error { background: var(--red); }
-    .layout {
-      display: grid;
-      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
-      gap: 16px;
-      align-items: start;
-    }
-    .panel {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: var(--shadow);
-      margin-bottom: 16px;
-      overflow: hidden;
-    }
-    .panel.pad { padding: 16px; }
-    .panel-head {
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--line);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    .form-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-    label { display: block; font-size: 12px; color: #475467; margin-bottom: 6px; }
-    input, select {
-      width: 100%;
-      min-height: 38px;
-      border: 1px solid #cbd5e1;
-      border-radius: 8px;
-      padding: 8px 10px;
-      background: #fff;
-      color: var(--text);
-    }
-    input[type="checkbox"] { width: 16px; min-height: 16px; margin: 0; }
-    .check-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding-top: 20px;
-      color: #344054;
-      font-size: 13px;
-    }
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 14px;
-    }
-    .btn {
-      min-height: 38px;
-      border: 1px solid transparent;
-      border-radius: 8px;
-      padding: 8px 12px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: #111827;
-      color: #ffffff;
-    }
-    .btn.secondary { background: #ffffff; color: #17202a; border-color: var(--line); }
-    .btn.blue { background: var(--blue); }
-    .btn.teal { background: var(--teal); }
-    .btn:disabled { opacity: 0.55; cursor: progress; }
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(120px, 1fr));
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-    .metric {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-left: 5px solid var(--blue);
-      border-radius: 8px;
-      padding: 12px 14px;
-      min-height: 78px;
-      box-shadow: var(--shadow);
-    }
-    .metric span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
-    .metric strong { font-size: 22px; line-height: 1.2; word-break: break-word; }
-    .metric.teal { border-left-color: var(--teal); }
-    .metric.green { border-left-color: var(--green); }
-    .metric.orange { border-left-color: var(--orange); }
-    .metric.red { border-left-color: var(--red); }
-    .metric.violet { border-left-color: var(--violet); }
-    .tabs { display: none; }
-    .tabs.active { display: block; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { border-bottom: 1px solid var(--line); padding: 9px 10px; text-align: left; vertical-align: top; }
-    th { background: #f9fafb; color: #344054; font-weight: 700; }
-    tbody tr:hover { background: #f8fbff; }
-    .scroll { overflow: auto; max-height: 420px; }
-    .run-list button {
-      width: 100%;
-      border: 0;
-      border-bottom: 1px solid var(--line);
-      background: #fff;
-      text-align: left;
-      padding: 12px 14px;
-      cursor: pointer;
-      color: var(--text);
-    }
-    .run-list button:hover { background: #f3f6fb; }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: var(--surface-2);
-      color: #344054;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-    .topology {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-    }
-    .node {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      background: #fff;
-      min-height: 112px;
-    }
-    .node strong { display: block; margin-bottom: 8px; }
-    .bar {
-      height: 10px;
-      background: #e5e7eb;
-      border-radius: 999px;
-      overflow: hidden;
-      min-width: 90px;
-    }
-    .bar span { display: block; height: 100%; background: var(--teal); }
-    pre {
-      white-space: pre-wrap;
-      word-break: break-word;
-      background: #101828;
-      color: #f9fafb;
-      border-radius: 8px;
-      padding: 12px;
-      max-height: 340px;
-      overflow: auto;
-      font-size: 12px;
-    }
-    .notice {
-      border-left: 4px solid var(--blue);
-      background: #eff6ff;
-      padding: 10px 12px;
-      border-radius: 8px;
-      color: #1d4ed8;
-      font-size: 13px;
-      line-height: 1.55;
-      margin-bottom: 12px;
-    }
-    @media (max-width: 1040px) {
-      .app { grid-template-columns: 1fr; }
-      aside { position: static; height: auto; }
-      .layout { grid-template-columns: 1fr; }
-      .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
-      main { padding: 16px; }
-      header.top { flex-direction: column; }
-      .status { width: 100%; }
-    }
-  </style>
-</head>
-<body>
-  <div class="app">
-    <aside>
-      <div class="brand">
-        <strong>RFID 云边端协同控制台</strong>
-        <span>智慧仓储课程项目</span>
-      </div>
-      <nav id="nav"></nav>
-    </aside>
-    <main>
-      <header class="top">
-        <div>
-          <h1>智慧仓储 RFID 物联网系统</h1>
-          <div class="muted">端侧采集、边缘推理、云端流处理、数据库审计与大模型协议优化</div>
-        </div>
-        <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">就绪</span></div>
-      </header>
-
-      <section id="tab-console" class="tabs active">
-        <div class="layout">
-          <div>
-            <section class="panel pad">
-              <h2>运行配置</h2>
-              <form id="runForm">
-                <div class="form-grid">
-                  <div><label>场景</label><select id="scene"></select></div>
-                  <div><label>边缘协议</label><select id="protocol"></select></div>
-                  <div><label>终端读写器</label><input id="devices" type="number" min="1" max="48"></div>
-                  <div><label>边缘网关</label><input id="gateways" type="number" min="1" max="12"></div>
-                  <div><label>采集批次</label><input id="batches" type="number" min="1" max="20"></div>
-                  <div><label>每批标签数</label><input id="numTags" type="number" min="20" max="3000"></div>
-                  <div><label>价格下限</label><input id="priceMin" type="number" min="1"></div>
-                  <div><label>价格上限</label><input id="priceMax" type="number" min="2"></div>
-                  <div><label>流处理窗口</label><input id="streamWindow" type="number" min="1" max="50"></div>
-                  <div><label>签名密钥</label><input id="sharedSecret" type="password" value="rfid-course-demo-secret"></div>
-                  <div class="check-row"><input id="includeSecurity" type="checkbox" checked><span>运行安全测试</span></div>
-                  <div class="check-row"><input id="includeBenchmark" type="checkbox"><span>运行基准实验</span></div>
-                </div>
-                <div class="actions">
-                  <button class="btn blue" id="startRun" type="submit">▶ 开始运行</button>
-                  <button class="btn secondary" id="refreshState" type="button">↻ 刷新状态</button>
-                </div>
-              </form>
-            </section>
-            <section class="panel">
-              <div class="panel-head"><h2>历史运行</h2><span class="pill" id="runCount">0</span></div>
-              <div class="run-list" id="runList"></div>
-            </section>
-          </div>
-          <div>
-            <div class="metrics" id="metrics"></div>
-            <section class="panel">
-              <div class="panel-head"><h2>实时流处理窗口</h2><span class="pill" id="currentRunLabel">未选择运行</span></div>
-              <div class="scroll"><table><thead><tr><th>批次</th><th>网关</th><th>终端</th><th>识别价格</th><th>窗口命中率</th><th>平均耗时</th><th>告警</th></tr></thead><tbody id="streamRows"></tbody></table></div>
-            </section>
-            <section class="panel">
-              <div class="panel-head"><h2>边缘网关汇总</h2></div>
-              <div class="scroll"><table><thead><tr><th>网关</th><th>窗口数</th><th>平均协议耗时</th><th>平均帧长</th><th>命中率</th></tr></thead><tbody id="gatewayRows"></tbody></table></div>
-            </section>
-          </div>
-        </div>
-      </section>
-
-      <section id="tab-topology" class="tabs">
-        <section class="panel pad">
-          <h2>设备拓扑</h2>
-          <div class="notice">运行一次云边端流程后，数据库会更新终端读写器与边缘网关的在线状态。</div>
-          <h3>边缘网关</h3>
-          <div class="topology" id="gatewayNodes"></div>
-          <h3 style="margin-top:18px">端侧设备</h3>
-          <div class="topology" id="deviceNodes"></div>
-        </section>
-      </section>
-
-      <section id="tab-results" class="tabs">
-        <div class="layout">
-          <section class="panel">
-            <div class="panel-head"><h2>全局热点价格</h2></div>
-            <div class="scroll"><table><thead><tr><th>价格</th><th>热度</th><th>次数</th></tr></thead><tbody id="hotRows"></tbody></table></div>
-          </section>
-          <section class="panel">
-            <div class="panel-head"><h2>异常告警</h2></div>
-            <div class="scroll"><table><thead><tr><th>网关</th><th>终端</th><th>批次</th><th>告警</th></tr></thead><tbody id="alertRows"></tbody></table></div>
-          </section>
-        </div>
-        <section class="panel">
-          <div class="panel-head"><h2>可扩展性基准实验</h2></div>
-          <div class="scroll"><table><thead><tr><th>终端</th><th>网关</th><th>批次</th><th>标签</th><th>命中率</th><th>协议耗时</th><th>实测秒</th></tr></thead><tbody id="benchmarkRows"></tbody></table></div>
-        </section>
-        <section class="panel pad">
-          <h2>输出文件</h2>
-          <pre id="pathBlock">暂无输出</pre>
-        </section>
-      </section>
-
-      <section id="tab-security" class="tabs">
-        <section class="panel pad">
-          <h2>通信安全测试</h2>
-          <div class="form-grid">
-            <div><label>签名密钥</label><input id="securitySecret" type="password" value="rfid-course-demo-secret"></div>
-            <div class="actions" style="align-items:end"><button class="btn teal" id="runSecurity" type="button">✓ 运行校验</button></div>
-          </div>
-          <pre id="securityResult">暂无安全测试结果</pre>
-        </section>
-      </section>
-
-      <section id="tab-ai" class="tabs">
-        <section class="panel pad">
-          <h2>大模型协议优化任务</h2>
-          <div class="notice">此处默认执行 dry-run，生成提示词文件和目标协议路径，不会调用外部 API。</div>
-          <div class="form-grid">
-            <div><label>场景</label><select id="aiScene"></select></div>
-            <div><label>父代协议 A</label><select id="parentA"></select></div>
-            <div><label>父代协议 B</label><select id="parentB"></select></div>
-            <div><label>输出协议名</label><input id="protocolName" value="g_course_ai_demo"></div>
-            <div><label>目标世代</label><input id="targetGeneration" value="next"></div>
-            <div class="actions" style="align-items:end"><button class="btn blue" id="runAi" type="button">◇ 生成任务</button></div>
-          </div>
-          <pre id="aiResult">暂无大模型优化任务</pre>
-        </section>
-      </section>
-
-      <section id="tab-database" class="tabs">
-        <section class="panel pad">
-          <h2>数据库状态</h2>
-          <div class="metrics" id="dbMetrics"></div>
-          <pre id="dbPath"></pre>
-        </section>
-        <section class="panel">
-          <div class="panel-head"><h2>系统事件</h2></div>
-          <div class="scroll"><table><thead><tr><th>ID</th><th>时间</th><th>类型</th><th>对象</th><th>消息</th></tr></thead><tbody id="eventRows"></tbody></table></div>
-        </section>
-        <section class="panel">
-          <div class="panel-head"><h2>AI 任务记录</h2></div>
-          <div class="scroll"><table><thead><tr><th>ID</th><th>时间</th><th>场景</th><th>父代</th><th>输出协议</th><th>状态</th></tr></thead><tbody id="aiJobRows"></tbody></table></div>
-        </section>
-      </section>
-    </main>
-  </div>
-  <script>
-    const tabs = [
-      ["console", "控制台", "M4 4h16v16H4z M8 8h8v4H8z M8 14h8v6H8z"],
-      ["topology", "拓扑", "M12 3v6 M6 21v-6h12v6 M6 15l6-6 6 6"],
-      ["results", "结果", "M4 19h16 M7 16V8 M12 16V5 M17 16v-4"],
-      ["security", "安全", "M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7z"],
-      ["ai", "大模型", "M12 3l2.5 5 5.5.8-4 3.8 1 5.4-5-2.7-5 2.7 1-5.4-4-3.8 5.5-.8z"],
-      ["database", "数据库", "M4 6c0-2 16-2 16 0v12c0 2-16 2-16 0z M4 6v6c0 2 16 2 16 0 M4 12v6"],
-    ];
-    const state = { catalog: null, runs: [], currentRun: null, topology: null, database: null };
-    const $ = (id) => document.getElementById(id);
-
-    function icon(path) {
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"></path></svg>`;
-    }
-    function setStatus(text, mode = "ready") {
-      $("statusText").textContent = text;
-      $("statusDot").className = "dot" + (mode === "busy" ? " busy" : mode === "error" ? " error" : "");
-    }
-    function escapeHtml(value) {
-      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-    }
-    function tableEmpty(cols, text = "暂无数据") { return `<tr><td colspan="${cols}">${text}</td></tr>`; }
-    async function api(path, options = {}) {
-      const res = await fetch(path, {
-        headers: { "Content-Type": "application/json" },
-        ...options,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "请求失败");
-      return data;
-    }
-    function mountNav() {
-      $("nav").innerHTML = tabs.map(([id, label, path], index) =>
-        `<button class="${index === 0 ? "active" : ""}" data-tab="${id}">${icon(path)}<span>${label}</span></button>`
-      ).join("");
-      document.querySelectorAll("nav button").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          document.querySelectorAll("nav button").forEach((item) => item.classList.remove("active"));
-          document.querySelectorAll(".tabs").forEach((item) => item.classList.remove("active"));
-          btn.classList.add("active");
-          $("tab-" + btn.dataset.tab).classList.add("active");
-        });
-      });
-    }
-    function fillSelect(select, values, selected) {
-      select.innerHTML = values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
-      if (selected && values.includes(selected)) select.value = selected;
-    }
-    function refreshProtocolSelects() {
-      const scene = $("scene").value;
-      const protocols = state.catalog.protocols[scene] || [];
-      fillSelect($("protocol"), protocols, state.catalog.defaults.protocol);
-      fillSelect($("aiScene"), state.catalog.scenes, scene);
-      fillSelect($("parentA"), protocols, protocols.includes("g2_1") ? "g2_1" : protocols[0]);
-      fillSelect($("parentB"), protocols, protocols.includes("g2_2") ? "g2_2" : protocols[1] || protocols[0]);
-    }
-    function renderMetrics(run) {
-      const report = run?.result?.batch_report || {};
-      const values = [
-        ["终端", run?.devices ?? 0, "teal"],
-        ["网关", run?.gateways ?? 0, "blue"],
-        ["窗口", report.total_windows ?? run?.total_windows ?? 0, "green"],
-        ["命中率", report.average_hit_rate ?? run?.average_hit_rate ?? 0, "orange"],
-        ["协议耗时", run?.avg_gateway_protocol_time_ms ?? 0, "violet"],
-        ["告警", report.alerts?.length ?? run?.alert_count ?? 0, "red"],
-      ];
-      $("metrics").innerHTML = values.map(([label, value, tone]) =>
-        `<div class="metric ${tone}"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`
-      ).join("");
-    }
-    function renderRuns() {
-      $("runCount").textContent = state.runs.length;
-      if (!state.runs.length) {
-        $("runList").innerHTML = `<div class="muted" style="padding:14px">暂无历史运行</div>`;
-        return;
-      }
-      $("runList").innerHTML = state.runs.map((run) => `
-        <button data-run="${run.id}">
-          <strong>#${run.id} ${escapeHtml(run.scene)} / ${escapeHtml(run.protocol)}</strong>
-          <div class="muted">${escapeHtml(run.created_at)} · ${run.devices} 端 · ${run.gateways} 边 · 命中率 ${run.average_hit_rate}</div>
-        </button>
-      `).join("");
-      document.querySelectorAll("[data-run]").forEach((btn) => {
-        btn.addEventListener("click", () => loadRun(Number(btn.dataset.run)));
-      });
-    }
-    function renderRunDetail(detail) {
-      state.currentRun = detail;
-      $("currentRunLabel").textContent = detail ? `运行 #${detail.id}` : "未选择运行";
-      renderMetrics(detail);
-      const streams = detail?.result?.stream_snapshots || [];
-      $("streamRows").innerHTML = streams.length ? streams.map((item) => `
-        <tr><td>${escapeHtml(item.latest_batch)}</td><td>${escapeHtml(item.latest_gateway)}</td><td>${escapeHtml(item.latest_device)}</td>
-        <td>${escapeHtml((item.latest_modes || []).join(", "))}</td><td>${escapeHtml(item.recent_hit_rate)}</td>
-        <td>${escapeHtml(item.recent_avg_protocol_time_ms)}</td><td>${escapeHtml(item.recent_alert_count)}</td></tr>
-      `).join("") : tableEmpty(7);
-      const gatewayRows = Object.entries(detail?.result?.batch_report?.gateway_summary || {});
-      $("gatewayRows").innerHTML = gatewayRows.length ? gatewayRows.map(([id, item]) => `
-        <tr><td>${escapeHtml(id)}</td><td>${escapeHtml(item.windows)}</td><td>${escapeHtml(item.avg_protocol_time_ms)}</td>
-        <td>${escapeHtml(item.avg_frame_size)}</td><td>${escapeHtml(item.hit_rate)}</td></tr>
-      `).join("") : tableEmpty(5);
-      const hot = detail?.result?.batch_report?.global_hot_prices || [];
-      const maxCount = Math.max(1, ...hot.map((item) => Number(item.count || 0)));
-      $("hotRows").innerHTML = hot.length ? hot.map((item) => {
-        const width = Math.max(8, Math.round(Number(item.count || 0) / maxCount * 100));
-        return `<tr><td>${escapeHtml(item.price)}</td><td><div class="bar"><span style="width:${width}%"></span></div></td><td>${escapeHtml(item.count)}</td></tr>`;
-      }).join("") : tableEmpty(3);
-      const alerts = detail?.result?.batch_report?.alerts || [];
-      $("alertRows").innerHTML = alerts.length ? alerts.map((item) => `
-        <tr><td>${escapeHtml(item.gateway_id)}</td><td>${escapeHtml(item.device_id)}</td><td>${escapeHtml(item.batch_index)}</td><td>${escapeHtml(item.alert)}</td></tr>
-      `).join("") : tableEmpty(4, "暂无异常告警");
-      const benchmark = detail?.benchmark || [];
-      $("benchmarkRows").innerHTML = benchmark.length ? benchmark.map((item) => `
-        <tr><td>${escapeHtml(item.devices)}</td><td>${escapeHtml(item.gateways)}</td><td>${escapeHtml(item.batches)}</td>
-        <td>${escapeHtml(item.num_tags)}</td><td>${escapeHtml(item.average_hit_rate)}</td>
-        <td>${escapeHtml(item.avg_gateway_protocol_time_ms)}</td><td>${escapeHtml(item.wall_clock_s)}</td></tr>
-      `).join("") : tableEmpty(7, "本次未运行基准实验");
-      $("pathBlock").textContent = JSON.stringify({
-        output_dir: detail?.output_dir,
-        dashboard_path: detail?.dashboard_path,
-      }, null, 2);
-    }
-    function renderTopology(topology) {
-      const gateways = topology?.gateways || [];
-      const devices = topology?.devices || [];
-      $("gatewayNodes").innerHTML = gateways.length ? gateways.map((item) => `
-        <div class="node"><strong>${escapeHtml(item.name)}</strong><div class="muted">${escapeHtml(item.gateway_id)} · ${escapeHtml(item.location)}</div><div class="pill" style="margin-top:10px">${escapeHtml(item.status)}</div></div>
-      `).join("") : `<div class="muted">暂无网关记录</div>`;
-      $("deviceNodes").innerHTML = devices.length ? devices.map((item) => `
-        <div class="node"><strong>${escapeHtml(item.name)}</strong><div class="muted">${escapeHtml(item.device_id)} → ${escapeHtml(item.gateway_id)}</div><div class="muted">${escapeHtml(item.device_type)} · ${escapeHtml(item.location)}</div></div>
-      `).join("") : `<div class="muted">暂无端侧设备记录</div>`;
-    }
-    function renderDatabase(db) {
-      const counts = db?.counts || {};
-      const keys = ["runs", "devices", "gateways", "stream_snapshots", "alerts", "ai_jobs"];
-      $("dbMetrics").innerHTML = keys.map((key, index) => {
-        const tones = ["blue", "teal", "green", "orange", "red", "violet"];
-        return `<div class="metric ${tones[index]}"><span>${key}</span><strong>${escapeHtml(counts[key] ?? 0)}</strong></div>`;
-      }).join("");
-      $("dbPath").textContent = db?.db_path || "";
-      const events = db?.recent_events || [];
-      $("eventRows").innerHTML = events.length ? events.map((item) => `
-        <tr><td>${item.id}</td><td>${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.event_type)}</td><td>${escapeHtml(item.entity_type || "")} ${escapeHtml(item.entity_id || "")}</td><td>${escapeHtml(item.message)}</td></tr>
-      `).join("") : tableEmpty(5);
-      const jobs = db?.ai_jobs || [];
-      $("aiJobRows").innerHTML = jobs.length ? jobs.map((item) => `
-        <tr><td>${item.id}</td><td>${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.scene)}</td><td>${escapeHtml(item.parent_a)} + ${escapeHtml(item.parent_b)}</td><td>${escapeHtml(item.protocol_name)}</td><td>${escapeHtml(item.status)}</td></tr>
-      `).join("") : tableEmpty(6);
-    }
-    async function loadState() {
-      setStatus("加载状态", "busy");
-      const data = await api("/api/state");
-      state.catalog = data.catalog;
-      state.runs = data.runs || [];
-      state.topology = data.topology;
-      state.database = data.database;
-      fillSelect($("scene"), state.catalog.scenes, state.catalog.defaults.scene);
-      $("devices").value = state.catalog.defaults.devices;
-      $("gateways").value = state.catalog.defaults.gateways;
-      $("batches").value = state.catalog.defaults.batches;
-      $("numTags").value = state.catalog.defaults.num_tags;
-      $("priceMin").value = state.catalog.defaults.price_min;
-      $("priceMax").value = state.catalog.defaults.price_max;
-      $("streamWindow").value = state.catalog.defaults.stream_window;
-      refreshProtocolSelects();
-      renderRuns();
-      renderTopology(state.topology);
-      renderDatabase(state.database);
-      if (state.runs[0]) await loadRun(state.runs[0].id);
-      else renderMetrics(null);
-      setStatus("就绪");
-    }
-    async function loadRun(id) {
-      setStatus(`加载运行 #${id}`, "busy");
-      const data = await api(`/api/runs/${id}`);
-      renderRunDetail(data.run);
-      setStatus("就绪");
-    }
-    async function startRun(event) {
-      event.preventDefault();
-      const payload = {
-        scene: $("scene").value,
-        protocol: $("protocol").value,
-        devices: Number($("devices").value),
-        gateways: Number($("gateways").value),
-        batches: Number($("batches").value),
-        num_tags: Number($("numTags").value),
-        price_min: Number($("priceMin").value),
-        price_max: Number($("priceMax").value),
-        stream_window: Number($("streamWindow").value),
-        shared_secret: $("sharedSecret").value,
-        include_security: $("includeSecurity").checked,
-        include_benchmark: $("includeBenchmark").checked,
-        dashboard: true,
-      };
-      $("startRun").disabled = true;
-      setStatus("云边端流程运行中", "busy");
-      try {
-        const data = await api("/api/runs", { method: "POST", body: JSON.stringify(payload) });
-        state.runs.unshift(data.detail);
-        await loadState();
-        await loadRun(data.run_id);
-        setStatus(`完成运行 #${data.run_id}`);
-      } catch (err) {
-        setStatus(err.message, "error");
-        alert(err.message);
-      } finally {
-        $("startRun").disabled = false;
-      }
-    }
-    async function runSecurityOnly() {
-      setStatus("安全校验运行中", "busy");
-      try {
-        const data = await api("/api/security", { method: "POST", body: JSON.stringify({ shared_secret: $("securitySecret").value }) });
-        $("securityResult").textContent = JSON.stringify(data.result, null, 2);
-        state.database = data.database;
-        renderDatabase(state.database);
-        setStatus("安全校验完成");
-      } catch (err) {
-        setStatus(err.message, "error");
-      }
-    }
-    async function runAiDry() {
-      setStatus("生成大模型任务", "busy");
-      try {
-        const payload = {
-          scene: $("aiScene").value,
-          parent_a: $("parentA").value,
-          parent_b: $("parentB").value,
-          protocol_name: $("protocolName").value,
-          target_generation: $("targetGeneration").value,
-        };
-        const data = await api("/api/ai/dry-run", { method: "POST", body: JSON.stringify(payload) });
-        $("aiResult").textContent = JSON.stringify(data, null, 2);
-        const db = await api("/api/database");
-        renderDatabase(db);
-        setStatus("大模型任务已生成");
-      } catch (err) {
-        setStatus(err.message, "error");
-        alert(err.message);
-      }
-    }
-    function bindEvents() {
-      $("scene").addEventListener("change", refreshProtocolSelects);
-      $("aiScene").addEventListener("change", () => {
-        const protocols = state.catalog.protocols[$("aiScene").value] || [];
-        fillSelect($("parentA"), protocols, protocols[0]);
-        fillSelect($("parentB"), protocols, protocols[1] || protocols[0]);
-      });
-      $("runForm").addEventListener("submit", startRun);
-      $("refreshState").addEventListener("click", loadState);
-      $("runSecurity").addEventListener("click", runSecurityOnly);
-      $("runAi").addEventListener("click", runAiDry);
-    }
-    mountNav();
-    bindEvents();
-    loadState().catch((err) => {
-      console.error(err);
-      setStatus(err.message, "error");
-    });
-  </script>
-</body>
-</html>
-"""
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Start the interactive RFID cloud-edge-device course console.")
+    parser = argparse.ArgumentParser(description="Start the interactive RFID protocol self-optimization Web platform.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
 
     init_database()
     server = ThreadingHTTPServer((args.host, args.port), CourseRequestHandler)
-    print(f"RFID course console: http://{args.host}:{args.port}")
+    print(f"RFID self-optimization platform: http://{args.host}:{args.port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("Shutting down RFID course console.")
+        print("Shutting down RFID self-optimization platform.")
     finally:
         server.server_close()
     return 0
@@ -2562,3 +1646,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
