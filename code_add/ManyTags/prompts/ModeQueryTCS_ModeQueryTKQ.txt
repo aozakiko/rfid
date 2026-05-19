@@ -1,0 +1,253 @@
+提示词：任务: 作为一名资深的RFID协议设计与优化专家，您的任务是基于给定的两个父代RFID协议（不要引入任何其他协议），创造一个全新的、功能完整的子代协议。该协议的核心目标是解决一个更具挑战性的 多众数查询问题。在此场景下，100000个标签（其价格属性值范围为1-1000）中存在多个频率相近的“热门”价格（众数），您的协议需要至少准确找出一个。
+
+核心设计准则 (必须严格遵守):
+1、强制交叉 (Mandatory Crossover): 新协议的设计必须体现出对两个父代协议核心思想的深度融合。您必须从父代A和父代B的设计哲学中汲取灵感，并有机地结合它们的优势，形成一个逻辑自洽的全新策略。
+2、强制突变 (Mandatory Mutation): 在融合父代思想的基础上，新协议必须引入至少一项在两个父代中都未曾出现过的、全新的优化机制或逻辑。
+3、准确率优先 (Accuracy First): 协议的逻辑正确性是最高优先级。最终方案必须是健壮的，能够稳定且准确地找出价格属性的众数。
+4、信息隔离原则 (Information Isolation Principle):
+    读写器 (Reader): 读写器默认已知环境中所有标签的ID列表作为全局背景信息。在协议执行期间，读写器可以向标签广播任何参数。其所有决策和分析，必须严格且仅依据以下信息：1) 它自己广播的历史参数；2) 从天线接收到的匿名聚合信号（即frame帧，一系列比特流）；3) 已知的全局标签ID列表。严禁在代码逻辑中直接或间接访问任何单个标签的私有属性（如 tag.price）。
+    标签 (Tag): 标签的响应行为严格且仅依据以下信息：1) 自身的私有数据（如ID和价格）；2) 当前从读写器接收到的广播指令。严禁标签获取其他任何标签的信息或全局通信结果。
+5、执行时间计算：你需要在代码中计算你设计协议的执行时间，其计算公式为:总执行时间公式: TotalTime = T_reader + T_tag + T_overhead
+T_reader (ms) = total_bits_sent_by_reader × 0.025
+T_tag (ms) = total_slots × bits_per_slot × 0.4
+T_overhead (ms) = (total_frames - 1) × 30
+
+执行步骤：
+第一步：交叉 (Crossover) - 融合父代基因
+请分析父代A和父代B的python代码，从他们的设计中获取灵感，生成一个结构上完整且逻辑自洽的初始子代协议。
+第二步：突变 (Mutation) - 引入创新优化
+接下来，请审视您在第一步中生成的初始子代协议，并对其进行一次有意义的“突变”。这个突变应该是一项父代A和父代B中都未曾出现过的、全新的优化或改动。
+你可以考虑但不限于以下突变方向：
+（1）引入一种全新的启发式策略来动态调整参数（如 frame_size）。
+（2） 简化或替换协议中的某个核心数据结构以提升效率。
+（3）增加一个在父代中没有的、用于提前终止无效查询的逻辑判断。
+请将这个突变无缝地集成到您的设计中，形成最终的子代协议。
+
+输出要求:
+1、请生成一个功能完整、符合IProtocol接口标准的Python类（只包含协议类即可，其他直接导入）。
+2、输出只包含经过交叉与突变后最终形成的、可直接运行的解决方案代码。
+3、请在代码中用注释明确标注出：
+    # --- 交叉部分：融合父代A的...思想与父代B的...思想 ---
+    # --- 突变部分：引入...全新机制 ---
+
+协议A：
+# protocol/ModeQueryTCS.py
+
+from typing import List, Tuple, Dict
+from collections import defaultdict
+from base import Tag, IProtocol, generate_random_seed,simple_hash
+
+class ModeQueryTCS(IProtocol):
+    """
+    修正版协议：基于鲁棒启发式指标的TCS众数查询
+    
+    本协议实现了TCS（Tag Collision Separation）的基本思想，但进行了关键修正以
+    保证其逻辑正确性并严格遵守信息隔离原则。协议迭代所有可能的价格，并为每个
+    价格运行一次独立的帧通信，通过一个更鲁棒的启发式指标——“非空时隙数”
+    （成功数+冲突数），来评估每个价格下的标签群体规模，从而找出最可能的众数。
+    """
+    
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        total_frames = 0
+        total_bits_sent_by_reader = 0
+        total_tag_bits_sent = 0
+
+        # --- 协议超参数 ---
+        frame_size = 128
+        
+        # [修正] 使用更有意义的变量名 price_to_score_map
+        price_to_score_map = {}
+
+        # ----------- 迭代查询所有价格 -----------
+        for p in range(price_min, price_max + 1):
+            
+            # --- 读写器行为: 广播对价格 p 的探测指令 ---
+            total_frames += 1
+            seed_s = generate_random_seed()
+            # 读写器广播Select(p), frame_size, seed
+            total_bits_sent_by_reader += p.bit_length() + frame_size.bit_length() + seed_s.bit_length()
+
+            # --- [物理层模拟] ---
+            # 读写器无法访问标签私有数据。此代码块模拟所有标签的匿名、聚合响应。
+            # 读写器能观察到的最终结果是 slot_states 数组。
+            slot_states = [0] * frame_size  # 0: 空闲, 1: 成功, >1: 冲突
+            
+            # 1. 标签根据广播的 p 和自身的 price 判断是否响应
+            # 2. 响应的标签根据广播的 seed 和自身的 id 计算时隙并回应
+            for t in tags:
+                if t.price == p:
+                    slot_id = simple_hash(t.id, seed_s) % frame_size
+                    slot_states[slot_id] += 1
+            # --- [物理层模拟结束] ---
+
+            # 探测阶段，每个时隙回复1bit即可
+            total_tag_bits_sent += frame_size * 1
+
+            # --- 读写器分析聚合信号 ---
+            # [修正] 采用更鲁棒的“非空时隙数”作为评分
+            num_non_empty_slots = sum(1 for count in slot_states if count > 0)
+            
+            if num_non_empty_slots > 0:
+                price_to_score_map[p] = num_non_empty_slots
+
+        # --- 最终处理 (Post-processing) ---
+        
+        # --- 时间成本计算 ---
+        T_reader = total_bits_sent_by_reader * 0.025
+        T_tag = total_tag_bits_sent * 0.4
+        T_overhead = (total_frames - 1) * 30 if total_frames > 1 else 0
+        total_time_ms = T_reader + T_tag + T_overhead
+
+        verification_data = {
+            "frame_size": frame_size,
+            "heuristic_metric": "non_empty_slots",
+            "final_scores": price_to_score_map
+        }
+        
+        if not price_to_score_map:
+            return [], 0, total_time_ms, verification_data
+
+        # --- 找出得分最高的众数 ---
+        max_score = max(price_to_score_map.values())
+        
+        # [修正] 返回所有并列的众数，并确保排序
+        modes = sorted([
+            price for price, score in price_to_score_map.items() 
+            if score == max_score
+        ])
+        
+        # 返回众数列表和它们对应的最高分
+        return modes, max_score, total_time_ms, verification_data
+
+
+协议B：
+import math
+from typing import List, Tuple, Dict
+from collections import defaultdict
+from base import Tag, Frame, generate_random_seed, IProtocol,simple_hash
+
+
+
+class ModeQueryTKQ(IProtocol):
+    """
+    实现了基于TKQ思想的价格众数查询协议。
+    """
+    
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        # *** 修改点 1：更新了返回类型以包含用于验证的字典 (Dict) ***
+        total_time_ms = 0.0
+        
+        # ----------- 阶段一: 读写器初始化 -----------
+        num_price_values = price_max - price_min + 1
+        frame_size = num_price_values  # 帧长f设置为价格值的总数
+        sog_length_v = 32              # SOG字符串长度
+        omega_w = 1.2897               # 估算器常量
+        num_rounds = 3                 # 为提高估算稳定性，执行多轮
+        
+        price_stats = {p: {"sum_L": 0.0, "num_slots": 0, "estimated_n": 0.0} 
+                       for p in range(price_min, price_max + 1)}
+
+        # --- 多轮估算循环 ---
+        for _ in range(num_rounds):
+            # ----------- 阶段二: 指令广播 -----------
+            seed_r = generate_random_seed()
+            
+            bits_to_send = (seed_r.bit_length() + frame_size.bit_length() + sog_length_v.bit_length())
+            time_send_ms = bits_to_send * 0.025
+            total_time_ms += time_send_ms
+            total_time_ms += 30.0 # 帧间开销
+
+            # ----------- 阶段三: 标签处理 (模拟) -----------
+            tag_replies = []
+            for t in tags:
+                # 1. 生成SOG字符串
+                random_bits = simple_hash(t.id, seed_r)
+                
+                # --- [内联 _find_leading_zeros 逻辑] ---
+                mu = 0
+                count = 0
+                for i in range(sog_length_v - 1, -1, -1):
+                    if (random_bits >> i) & 1:
+                        mu = count
+                        break
+                    count += 1
+                else:
+                    mu = sog_length_v
+                # --- [内联结束] ---
+
+                sog_string = (1 << (sog_length_v - 1 - mu)) if mu < sog_length_v else 0
+
+                # 2. 根据价格选择时隙
+                slot_id = simple_hash(t.price, seed_r) % frame_size
+                tag_replies.append({'slot_id': slot_id, 'sog_string': sog_string})
+
+            # ----------- 阶段四: 物理帧聚合与回复时间 -----------
+            physical_frame = Frame(num_slots=frame_size, bits_per_slot=sog_length_v)
+            for reply in tag_replies:
+                physical_frame.aggregate(reply['slot_id'], reply['sog_string'])
+                
+            time_reply_ms = frame_size * sog_length_v * 0.4
+            total_time_ms += time_reply_ms
+
+            # ----------- 阶段五: 结果分析 -----------
+            # 1. 预测价格到时隙的映射，识别同构时隙
+            slot_to_prices_map = defaultdict(list)
+            for p in range(price_min, price_max + 1):
+                slot_idx = simple_hash(p, seed_r) % frame_size
+                slot_to_prices_map[slot_idx].append(p)
+
+            # 2. 处理同构时隙
+            for slot_idx, prices in slot_to_prices_map.items():
+                if len(prices) == 1:
+                    price_val = prices[0]
+                    combined_signal = physical_frame.slots[slot_idx]
+                    
+                    # b. 计算前导'1'的长度 L
+                    # --- [内联 _find_leading_ones 逻辑] ---
+                    L = 0
+                    count = 0
+                    for i in range(sog_length_v - 1, -1, -1):
+                        if not ((combined_signal >> i) & 1):
+                            L = count
+                            break
+                        count += 1
+                    else:
+                        L = sog_length_v
+                    # --- [内联结束] ---
+                    
+                    # c. 更新统计数据
+                    price_stats[price_val]["sum_L"] += L
+                    price_stats[price_val]["num_slots"] += 1
+                    
+                    # d. 重新估算数量
+                    s_p = price_stats[price_val]["num_slots"]
+                    if s_p > 0:
+                        avg_L = price_stats[price_val]["sum_L"] / s_p
+                        estimated_n = omega_w * (2 ** avg_L)
+                        price_stats[price_val]["estimated_n"] = estimated_n
+
+        # ----------- 最终处理 (Post-processing) -----------
+        # *** 修改点 2：创建用于验证的字典 ***
+        verification_data = {
+            "frame_size": frame_size,
+            "bits_per_slot": sog_length_v
+        }
+
+        if not price_stats:
+            return [], 0, total_time_ms, verification_data
+
+        max_count = 0
+        for stats in price_stats.values():
+            if stats["estimated_n"] > max_count:
+                max_count = stats["estimated_n"]
+        
+        mode_prices = []
+        if max_count > 0:
+            all_modes = sorted([price for price, stats in price_stats.items() 
+                                if math.isclose(stats["estimated_n"], max_count)])
+            if all_modes:
+                # 只返回最大的众数
+                mode_prices = [all_modes[-1]]
+        
+        # *** 修改点 3：在返回元组中增加验证字典 ***
+        return mode_prices, math.ceil(max_count), total_time_ms, verification_data

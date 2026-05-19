@@ -1,0 +1,9 @@
+﻿protocol_name,accuracy,time,validator_passed,information_isolation_passed
+web_mode_query_candidate,0.0,962.6,True,True
+ModeQuerySEM,1.0,205078.25,True,True
+ModeQueryTCS,1.0,81988.4,False,True
+ModeQueryTKQ,1.0,38492.45,True,True
+ModeQueryEE,1.0,598.4,True,True
+ModeQueryID,1.0,904.0,False,True
+web_mean_estimation_candidate,0.0,131.0,True,True
+web_mean_estimation_iter_01,0.0,1180.825,True,False

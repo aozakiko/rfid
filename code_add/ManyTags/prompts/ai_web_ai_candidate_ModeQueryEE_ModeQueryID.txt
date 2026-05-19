@@ -1,0 +1,244 @@
+提示词：任务: 作为一名资深的RFID协议设计与优化专家，您的任务是基于给定的两个父代RFID协议（不要引入任何其他协议），创造一个全新的、功能完整的子代协议。该协议的核心目标是解决一个更具挑战性的 多众数查询问题。在此场景下，100000个标签（其价格属性值范围为1-1000）中存在多个频率相近的“热门”价格（众数），您的协议需要至少准确找出一个。
+
+核心设计准则 (必须严格遵守):
+1、强制交叉 (Mandatory Crossover): 新协议的设计必须体现出对两个父代协议核心思想的深度融合。您必须从父代A和父代B的设计哲学中汲取灵感，并有机地结合它们的优势，形成一个逻辑自洽的全新策略。
+2、强制突变 (Mandatory Mutation): 在融合父代思想的基础上，新协议必须引入至少一项在两个父代中都未曾出现过的、全新的优化机制或逻辑。
+3、准确率优先 (Accuracy First): 协议的逻辑正确性是最高优先级。最终方案必须是健壮的，能够稳定且准确地找出价格属性的众数。
+4、信息隔离原则 (Information Isolation Principle):
+    读写器 (Reader): 读写器默认已知环境中所有标签的ID列表作为全局背景信息。在协议执行期间，读写器可以向标签广播任何参数。其所有决策和分析，必须严格且仅依据以下信息：1) 它自己广播的历史参数；2) 从天线接收到的匿名聚合信号（即frame帧，一系列比特流）；3) 已知的全局标签ID列表。严禁在代码逻辑中直接或间接访问任何单个标签的私有属性（如 tag.price）。
+    标签 (Tag): 标签的响应行为严格且仅依据以下信息：1) 自身的私有数据（如ID和价格）；2) 当前从读写器接收到的广播指令。严禁标签获取其他任何标签的信息或全局通信结果。
+5、执行时间计算：你需要在代码中计算你设计协议的执行时间，其计算公式为:总执行时间公式: TotalTime = T_reader + T_tag + T_overhead
+T_reader (ms) = total_bits_sent_by_reader × 0.025
+T_tag (ms) = total_slots × bits_per_slot × 0.4
+T_overhead (ms) = (total_frames - 1) × 30
+
+执行步骤：
+第一步：交叉 (Crossover) - 融合父代基因
+请分析父代A和父代B的python代码，从他们的设计中获取灵感，生成一个结构上完整且逻辑自洽的初始子代协议。
+第二步：突变 (Mutation) - 引入创新优化
+接下来，请审视您在第一步中生成的初始子代协议，并对其进行一次有意义的“突变”。这个突变应该是一项父代A和父代B中都未曾出现过的、全新的优化或改动。
+你可以考虑但不限于以下突变方向：
+（1）引入一种全新的启发式策略来动态调整参数（如 frame_size）。
+（2） 简化或替换协议中的某个核心数据结构以提升效率。
+（3）增加一个在父代中没有的、用于提前终止无效查询的逻辑判断。
+请将这个突变无缝地集成到您的设计中，形成最终的子代协议。
+
+输出要求:
+1、请生成一个功能完整、符合IProtocol接口标准的Python类（只包含协议类即可，其他直接导入）。
+2、输出只包含经过交叉与突变后最终形成的、可直接运行的解决方案代码。
+3、请在代码中用注释明确标注出：
+    # --- 交叉部分：融合父代A的...思想与父代B的...思想 ---
+    # --- 突变部分：引入...全新机制 ---
+
+协议A：
+# protocol/ModeQueryEE.py
+
+import math
+import time
+from typing import List, Tuple, Dict
+from base import Tag, IProtocol
+
+class ModeQueryEE(IProtocol):
+    """
+    修正版协议：基于精确计数的“逐价清点”众数查询法
+    
+    本协议的核心思想保持不变：对每个可能的价格，通过反复寻找并计数拥有该价格
+    的标签，来获得该价格的精确数量。此版本经过重构，严格遵守了信息隔离原则
+    和逻辑正确性标准。
+    
+    优点:
+    - 正确性极高：由于是精确计数，最终结果100%正确。
+    
+    缺点:
+    - 效率极低：执行时间与 (价格范围 * 众数平均数量) 成正比。
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        total_time_ms = 0.0
+        price_exact_counts = {}
+
+        # --- 协议超参数 (用于EE子协议模拟) ---
+        EE_FRAME_SLOTS = 16
+        TAG_ID_BITS = 32
+        TIME_PER_EE_FRAME_MS = 58.8  # (2*0.2*32*1) + (16*1.0) + 30.0 = 58.8 ms
+        TIME_PER_SILENT_CMD_MS = 6.4
+
+        # --- 读写器逻辑: 遍历所有价格并发起计数指令 ---
+        for p in range(price_min, price_max + 1):
+            
+            # --- [物理层模拟] ---
+            # 读写器广播一个高级指令：“开始对价格p进行精确计数”。
+            # 以下代码块模拟了物理层执行该指令的全过程，读写器无法看到内部细节。
+            
+            # 1. 物理层根据读写器广播的p，确定响应的标签群体
+            current_price_tags_dict = {t.id: t for t in tags if t.price == p}
+            
+            count_for_p = 0
+            time_cost_for_p = 0.0
+            
+            if current_price_tags_dict:
+                # 2. 物理层反复执行EE子协议来寻找并“静默”最小ID的标签
+                while current_price_tags_dict:
+                    # a. 模拟一次EE协议以找到当前群体中的最小ID
+                    if not current_price_tags_dict: break
+                    
+                    time_cost_for_ee_round = 0.0
+                    all_ids = list(current_price_tags_dict.keys())
+                    l_bound, h_bound = min(all_ids), max(all_ids) + 1
+
+                    while (h_bound - l_bound) > 1:
+                        time_cost_for_ee_round += TIME_PER_EE_FRAME_MS
+                        d = (h_bound - l_bound) / EE_FRAME_SLOTS
+                        if d == 0: break
+
+                        min_slot_idx_found = float('inf')
+                        for tag_id in current_price_tags_dict:
+                            if l_bound <= tag_id < h_bound:
+                                slot_idx = math.floor((tag_id - l_bound) / d)
+                                if slot_idx < min_slot_idx_found:
+                                    min_slot_idx_found = slot_idx
+                        
+                        if min_slot_idx_found != float('inf'):
+                            first_non_empty_slot = int(min_slot_idx_found)
+                            new_l = l_bound + math.ceil(d * first_non_empty_slot)
+                            new_h = l_bound + math.ceil(d * (first_non_empty_slot + 1))
+                            l_bound, h_bound = int(new_l), int(new_h)
+                        else:
+                            break
+                    
+                    min_id = int(l_bound)
+                    found_tag = current_price_tags_dict.get(min_id)
+                    time_cost_for_p += time_cost_for_ee_round
+
+                    # b. 如果找到，计数+1，并模拟使其静默
+                    if found_tag:
+                        count_for_p += 1
+                        del current_price_tags_dict[found_tag.id]
+                        time_cost_for_p += TIME_PER_SILENT_CMD_MS
+                    else:
+                        # 理论上应该总能找到，除非l_bound计算有误或字典为空
+                        break
+            
+            # --- [物理层模拟结束] ---
+
+            # --- 读写器接收聚合结果并更新状态 ---
+            # 读写器只得到一个最终计数值和总开销
+            if count_for_p > 0:
+                price_exact_counts[p] = count_for_p
+                total_time_ms += time_cost_for_p
+        
+        # --- 读写器在本地进行最终结果分析 ---
+        max_count = 0
+        modes = []
+        
+        if price_exact_counts:
+            max_count = max(price_exact_counts.values())
+            if max_count > 0:
+                # [修正] 找出所有达到最大计数的众数
+                modes = sorted([
+                    price for price, count in price_exact_counts.items() 
+                    if count == max_count
+                ])
+
+        verification_data = {
+            "ee_frame_slots": EE_FRAME_SLOTS,
+            "final_exact_counts": price_exact_counts
+        }
+        
+        return modes, max_count, total_time_ms, verification_data
+
+
+协议B：
+# protocol/ModeQueryID.py
+
+from typing import List, Tuple, Dict
+from collections import defaultdict
+from base import Tag, IProtocol
+
+class ModeQueryID(IProtocol):
+    """
+    最终修正版协议：基于逐一识别的精确众数查询 (Singulation-based Exact Mode Query)
+
+    本协议模拟了一个最基础但100%准确的众数查找方法。它通过执行一个完整的
+    “逐一识别与读取”(Singulation and Read)流程来实现。该流程会发现场内的
+    每一个标签，并单独请求其价格数据。此方法保证了结果的绝对准确性，
+    是衡量其他更高效协议性能的基准。
+    """
+    
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        total_frames = 0
+        total_bits_sent_by_reader = 0
+        total_tag_bits_sent = 0
+
+        # --- 协议超参数 (用于精确计数成本模拟) ---
+        # 假设每次“识别并读取”一个标签的平均开销
+        BITS_PER_SINGULATION_QUERY = 96  # 识别一个标签通常需要更复杂的指令序列
+        BITS_PER_PRICE_REPLY = 32      # 标签回复其价格数据
+
+        # =================================================================================
+        # 协议主体: 读写器发起一次完整的“盘点并读取”
+        # =================================================================================
+
+        # --- 读写器行为: 广播 "开始全面盘点并读取价格" 指令 ---
+        # 假设该指令是一个简单的“开始”信号，成本计入总开销
+        total_frames += 1
+
+        # --- [物理层模拟] ---
+        # 读写器无法直接访问标签。此代码块模拟了物理层收到指令后，
+        # 逐一识别场内所有标签并读取其价格的完整过程。
+        
+        # 1. 统计场内标签总数
+        num_tags = len(tags)
+        
+        # 2. 计算精确识别并读取所有标签的总开销
+        # 每次成功的识别和读取都可视为一次独立的交互或“帧”
+        total_frames += num_tags
+        total_bits_sent_by_reader += num_tags * BITS_PER_SINGULATION_QUERY
+        total_tag_bits_sent += num_tags * BITS_PER_PRICE_REPLY
+        
+        # 3. 收集所有标签回复的价格，形成一个匿名列表
+        all_prices_reported = [t.price for t in tags]
+        
+        # --- [物理层模拟结束] ---
+
+        # --- 读写器接收聚合结果: 一个价格列表 ---
+        # 读写器不知道哪个价格来自哪个标签，只收到了所有价格的集合。
+        
+        # --- 读写器在本地进行后处理以找出众数 ---
+        price_counts = defaultdict(int)
+        for price in all_prices_reported:
+            price_counts[price] += 1
+
+        # --- 最终结果处理与时间计算 ---
+        T_reader = total_bits_sent_by_reader * 0.025
+        T_tag = total_tag_bits_sent * 0.4
+        # 每次交互都有帧间开销
+        T_overhead = (total_frames - 1) * 30 if total_frames > 1 else 0
+        total_time_ms = T_reader + T_tag + T_overhead
+
+        verification_data = {
+            "method": "Full Singulation and Read",
+            "tags_identified": num_tags,
+            "final_exact_counts": dict(price_counts)
+        }
+        
+        if not price_counts:
+            return [], 0, total_time_ms, verification_data
+
+        # 1. 找到最大计数值
+        max_count = max(price_counts.values())
+        
+        # 2. 找出所有达到最大计数值的众数
+        modes = sorted([price for price, count in price_counts.items() if count == max_count])
+        
+        return modes, max_count, total_time_ms, verification_data
+
+附加硬性要求：
+1. 输出必须是完整的 Python 文件内容，不要输出 Markdown、解释文字或额外说明。
+2. 生成类名必须严格为 web_ai_candidate，且该类必须继承 IProtocol。
+3. 文件内必须包含必要 import，使代码可直接保存为 web_ai_candidate.py 后运行。
+4. execute() 必须返回 (modes, metric, total_time_ms, verification_data)。
+5. verification_data 至少必须包含 frame_size 和 bits_per_slot；如果存在多阶段，还应补充 stage_frame_sizes 与 stage_bits_per_slot。
+6. 优先保证约束验证能通过：bits_per_slot <= 256，frame_size <= 32768。
+7. 仍然必须遵守信息隔离原则，不允许读写器直接依据 tag.price 做决策。
+8. 对 execute() 返回的 modes 必须保守，不要通过猜测堆出大量候选值；宁可少报，也不要返回明显超出真实众数集合的大列表。

@@ -1,0 +1,482 @@
+提示词：任务: 作为一名资深的RFID协议设计与优化专家，您的任务是基于给定的两个父代RFID协议（不要引入任何其他协议），创造一个全新的、功能完整的子代协议。任务: 作为一名资深的RFID协议设计与优化专家，您的任务是基于给定的两个父代RFID协议（不要引入任何其他协议），创造一个全新的、功能完整的子代协议。该协议的核心目标是在保证较高的正确率的前提下，解决在20,000个标签中（其价格属性值范围为1-1000）的单一众数查询问题。
+
+核心设计准则 (必须严格遵守):
+1、强制交叉 (Mandatory Crossover): 新协议的设计必须体现出对两个父代协议核心思想的深度融合。您必须从父代A和父代B的设计哲学中汲取灵感，并有机地结合它们的优势，形成一个逻辑自洽的全新策略。
+2、强制突变 (Mandatory Mutation): 在融合父代思想的基础上，新协议必须引入至少一项在两个父代中都未曾出现过的、全新的优化机制或逻辑。
+3、准确率优先 (Accuracy First): 协议的逻辑正确性是最高优先级。最终方案必须是健壮的，能够稳定且准确地找出价格属性的众数。
+4、信息隔离原则 (Information Isolation Principle):
+    读写器 (Reader): 读写器默认已知环境中所有标签的ID列表作为全局背景信息。在协议执行期间，读写器可以向标签广播任何参数。其所有决策和分析，必须严格且仅依据以下信息：1) 它自己广播的历史参数；2) 从天线接收到的匿名聚合信号（即frame帧，一系列比特流）；3) 已知的全局标签ID列表。严禁在代码逻辑中直接或间接访问任何单个标签的私有属性（如 tag.price）。
+    标签 (Tag): 标签的响应行为严格且仅依据以下信息：1) 自身的私有数据（如ID和价格）；2) 当前从读写器接收到的广播指令。严禁标签获取其他任何标签的信息或全局通信结果。
+5、执行时间计算：你需要在代码中计算你设计协议的执行时间，其计算公式为:总执行时间公式: TotalTime = T_reader + T_tag + T_overhead
+T_reader (ms) = total_bits_sent_by_reader × 0.025
+T_tag (ms) = total_slots × bits_per_slot × 0.4
+T_overhead (ms) = (total_frames - 1) × 30
+
+执行步骤：
+第一步：交叉 (Crossover) - 融合父代基因
+请分析父代A和父代B的python代码，从他们的设计中获取灵感，生成一个结构上完整且逻辑自洽的初始子代协议。
+第二步：突变 (Mutation) - 引入创新优化
+接下来，请审视您在第一步中生成的初始子代协议，并对其进行一次有意义的“突变”。这个突变应该是一项父代A和父代B中都未曾出现过的、全新的优化或改动。
+你可以考虑但不限于以下突变方向：
+（1）引入一种全新的启发式策略来动态调整参数（如 frame_size）。
+（2） 简化或替换协议中的某个核心数据结构以提升效率。
+（3）增加一个在父代中没有的、用于提前终止无效查询的逻辑判断。
+请将这个突变无缝地集成到您的设计中，形成最终的子代协议。
+
+输出要求:
+1、请生成一个功能完整、符合IProtocol接口标准的Python类（只包含协议类即可，其他直接导入）。
+2、输出只包含经过交叉与突变后最终形成的、可直接运行的解决方案代码。
+3、请在代码中用注释明确标注出：
+    # --- 交叉部分：融合父代A的...思想与父代B的...思想 ---
+    # --- 突变部分：引入...全新机制 ---
+
+协议A：
+import math
+from typing import List, Tuple, Dict
+from base import Tag, Frame, generate_random_seed, IProtocol
+from hash import simple_hash
+
+class g2_1(IProtocol):
+    """
+    Hierarchical Filtering with Pruning Verification (HFPV) Protocol
+
+    This child protocol is designed for efficient and accurate single-mode queries in large-scale RFID systems.
+    It integrates the strengths of its two parent protocols and introduces a novel optimization to further
+    enhance performance.
+
+    --- 交叉部分：融合父代A的分批过滤思想与父代B的精确估算思想 ---
+    The protocol adopts a multi-stage, "coarse-to-fine" filtering strategy inspired by its parents:
+
+    1.  **Stage 1: Batch Screening (Inspired by Parent A's batching):**
+        The entire price space is first divided into several large batches. Instead of using a simple
+        heuristic like Parent A (non-empty slots), this protocol borrows the more sophisticated cardinality
+        estimation logic from Parent B to estimate the total number of tags within each *batch*. This
+        allows for a more accurate and rapid identification of the single most promising batch that likely
+        contains the mode, effectively pruning large, irrelevant sections of the price space.
+
+    2.  **Stage 2: Individual Estimation (Inspired by Parent B's estimation):**
+        Within the single candidate batch selected in Stage 1, the protocol applies the detailed estimation
+        mechanism from Parent B. It estimates the count for each individual price, identifying a small set
+        of candidate prices that have the highest likelihood of being the mode.
+
+    3.  **Stage 3: Verification (Inspired by Parent B's exact counting):**
+        For the final set of candidate prices, the protocol uses the robust, iterative ALOHA-based exact
+        counting method from Parent B to determine their true counts with 100% accuracy.
+
+    --- 突变部分：引入“基于已知计数的剪枝验证”全新机制 ---
+    To optimize the final, most costly stage, this protocol introduces a novel mechanism not present in
+    either parent: **Pruning Verification based on Known Counts**.
+
+    During the final verification stage, candidate prices are sorted in descending order based on their
+    estimated counts from Stage 2. The protocol performs an exact count on the first (most likely) candidate
+    and records its true count as `max_known_exact_count`. Then, for every subsequent candidate, it first
+    checks if its *estimated* count is less than `max_known_exact_count`. If it is, the candidate cannot
+    possibly be the mode, and the protocol *skips* the expensive exact counting process for it entirely. This
+    "winner-take-all" pruning dynamically reduces the number of required exact counts, significantly
+    saving time while guaranteeing correctness.
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        # --- Protocol Hyperparameters ---
+        self.NUM_BATCHES = 10  # For initial screening
+        self.BATCH_ESTIMATION_FRAME_SIZE = 512
+        self.INDIVIDUAL_ESTIMATION_FRAME_SIZE = 128
+        self.EXACT_COUNT_INITIAL_FRAME_SIZE = 64
+        self.CANDIDATE_THRESHOLD_RATIO = 0.7
+
+        # --- State and Time Tracking ---
+        self.total_frames = 0
+        self.total_bits_sent_by_reader = 0
+        self.total_tag_bits_sent = 0
+
+        # --- Stage 1: Batch Screening (Crossover) ---
+        all_prices = list(range(price_min, price_max + 1))
+        if not all_prices:
+            return [], 0, 0.0, {}
+
+        batch_size = math.ceil(len(all_prices) / self.NUM_BATCHES)
+        price_batches = [all_prices[i:i + batch_size] for i in range(0, len(all_prices), batch_size)]
+
+        batch_estimations = {}
+        for i, batch in enumerate(price_batches):
+            if not batch: continue
+            estimated_count = self._estimate_batch_count(tags, batch)
+            batch_estimations[i] = estimated_count
+
+        if not batch_estimations:
+            return [], 0, self._calculate_total_time(), {"stage": "batch_estimation_failed"}
+
+        # Select the best batch
+        candidate_batch_index = max(batch_estimations, key=batch_estimations.get)
+        candidate_batch_prices = price_batches[candidate_batch_index]
+
+        # --- Stage 2: Individual Price Estimation within the Candidate Batch (Crossover) ---
+        individual_estimations = self._estimate_individual_counts(tags, candidate_batch_prices)
+
+        if not individual_estimations:
+            return [], 0, self._calculate_total_time(), {"stage": "individual_estimation_failed"}
+
+        # Filter for candidate prices
+        valid_estimates = [c for c in individual_estimations.values() if c != float('inf')]
+        max_estimated_count = max(valid_estimates) if valid_estimates else 0
+        
+        candidate_prices = {p for p, c in individual_estimations.items() if c == float('inf')}
+        candidate_prices.update({
+            p for p, c in individual_estimations.items()
+            if c != float('inf') and c >= max_estimated_count * self.CANDIDATE_THRESHOLD_RATIO
+        })
+
+        if not candidate_prices:
+                  top_price = max(individual_estimations, key=individual_estimations.get)
+                  candidate_prices = {top_price}
+
+        # --- Stage 3: Pruned Exact Verification (Crossover + Mutation) ---
+        final_counts = {}
+        # Sort candidates by estimate (desc) to maximize pruning effectiveness
+        sorted_candidates = sorted(
+            list(candidate_prices),
+            key=lambda p: individual_estimations.get(p, 0),
+            reverse=True
+        )
+
+        max_known_exact_count = 0
+        for price in sorted_candidates:
+            # --- 突变部分：基于已知计数的剪枝验证 ---
+            # If the current candidate's estimate is already lower than a known exact count,
+            # it cannot be the mode. We can safely prune it.
+            if individual_estimations.get(price, 0) < max_known_exact_count:
+                continue
+
+            exact_count = self._get_exact_count_for_price(tags, price)
+            if exact_count > 0:
+                final_counts[price] = exact_count
+                if exact_count > max_known_exact_count:
+                    max_known_exact_count = exact_count
+        
+        # --- Final Result Analysis ---
+        modes = []
+        max_count = 0
+        if final_counts:
+            max_count = max(final_counts.values())
+            modes = sorted([p for p, c in final_counts.items() if c == max_count])
+
+        total_time_ms = self._calculate_total_time()
+        
+        verification_data = {
+            "batch_estimations": batch_estimations,
+            "candidate_batch_index": candidate_batch_index,
+            "individual_estimations": individual_estimations,
+            "sorted_candidates_for_verification": sorted_candidates,
+            "final_exact_counts": final_counts,
+        }
+
+        return modes, max_count, total_time_ms, verification_data
+
+    def _estimate_batch_count(self, tags: List[Tag], batch: List[int]) -> float:
+        """Estimates the total number of tags within a price batch."""
+        self.total_frames += 1
+        frame_size = self.BATCH_ESTIMATION_FRAME_SIZE
+        seed = generate_random_seed()
+        min_p, max_p = batch[0], batch[-1]
+        self.total_bits_sent_by_reader += min_p.bit_length() + max_p.bit_length() + frame_size.bit_length() + seed.bit_length()
+
+        # --- [Physical Layer Simulation] ---
+        slot_states = [0] * frame_size
+        for t in tags:
+            if min_p <= t.price <= max_p:
+                slot_id = simple_hash(t.id, seed) % frame_size
+                slot_states[slot_id] += 1
+        # --- [End Simulation] ---
+
+        self.total_tag_bits_sent += frame_size * 1
+
+        num_empty_slots = slot_states.count(0)
+        
+        if num_empty_slots == 0:
+            return float('inf') # High contention
+        if num_empty_slots == frame_size:
+            return 0.0
+
+        # Cardinality estimation formula
+        estimated_count = -frame_size * math.log(num_empty_slots / frame_size)
+        return estimated_count
+
+    def _estimate_individual_counts(self, tags: List[Tag], prices: List[int]) -> Dict[int, float]:
+        """(Derived from Parent B) Estimates counts for individual prices."""
+        self.total_frames += 1
+        frame_size = self.INDIVIDUAL_ESTIMATION_FRAME_SIZE
+        seed = generate_random_seed()
+        
+        price_to_bit_pos = {price: i for i, price in enumerate(prices)}
+        num_prices_in_batch = len(prices)
+        self.total_bits_sent_by_reader += seed.bit_length() + frame_size.bit_length() + num_prices_in_batch.bit_length()
+
+        # --- [Physical Layer Simulation] ---
+        # Each slot can hold a bitmap of responses for all prices in the batch
+        bits_per_slot = num_prices_in_batch
+        physical_frame = Frame(num_slots=frame_size, bits_per_slot=bits_per_slot)
+        price_set = set(prices)
+        for t in tags:
+            if t.price in price_set:
+                slot_id = simple_hash(t.id, seed) % frame_size
+                bit_pos = price_to_bit_pos[t.price]
+                reply_vector = 1 << bit_pos
+                physical_frame.aggregate(slot_id, reply_vector)
+        # --- [End Simulation] ---
+        
+        self.total_tag_bits_sent += frame_size * bits_per_slot
+
+        counts = {}
+        for price, bit_pos in price_to_bit_pos.items():
+            # Reader reconstructs the logical bit vector for this price
+            logical_vector = [((slot_data >> bit_pos) & 1) for slot_data in physical_frame.slots]
+            num_zeros = frame_size - sum(logical_vector)
+            if num_zeros == 0:
+                counts[price] = float('inf')
+            elif num_zeros == frame_size:
+                counts[price] = 0.0
+            else:
+                counts[price] = -frame_size * math.log(num_zeros / frame_size)
+        return counts
+
+    def _get_exact_count_for_price(self, tags: List[Tag], price: int) -> int:
+        """(MODIFIED FOR COMPLIANCE) Gets the precise tag count for a single price."""
+        identified_tags = set()
+        frame_size = self.EXACT_COUNT_INITIAL_FRAME_SIZE
+
+        # The loop must terminate based on observable events (no new tags, no collisions),
+        # not on a priori knowledge of the total count.
+        while True:
+            self.total_frames += 1
+            seed = generate_random_seed()
+            self.total_bits_sent_by_reader += price.bit_length() + seed.bit_length() + frame_size.bit_length()
+
+            # --- [Physical Layer Simulation] ---
+            # This now correctly models tags responding based on the broadcast `price`.
+            # The reader's logic does not have access to a pre-filtered set of tags.
+            slots = [[] for _ in range(frame_size)]
+            for t in tags:
+                # Tag's logic: respond if its price matches the broadcast price
+                # and it has not yet been identified (i.e., silenced).
+                if t.price == price and t.id not in identified_tags:
+                    slot_id = simple_hash(t.id, seed) % frame_size
+                    slots[slot_id].append(t.id)
+            # --- [End Simulation] ---
+
+            self.total_tag_bits_sent += frame_size * 1
+
+            newly_identified_this_frame = 0
+            collision_detected = False
+            # Reader's logic derives state from the physical simulation result.
+            for slot in slots:
+                if len(slot) == 1:  # 'Singleton' state
+                    tag_id = slot[0]
+                    # Check prevents re-counting (though simulation logic already handles this)
+                    if tag_id not in identified_tags:
+                        identified_tags.add(tag_id)
+                        newly_identified_this_frame += 1
+                elif len(slot) > 1:  # 'Collision' state
+                    collision_detected = True
+
+            # Simulate reader sending ACK/SILENCE commands to newly identified tags
+            if newly_identified_this_frame > 0:
+                self.total_bits_sent_by_reader += newly_identified_this_frame * 32  # Assuming 32-bit ID ACK
+
+            # Compliant termination condition: If a frame has no new tags and no collisions,
+            # the identification process for this price is complete.
+            if newly_identified_this_frame == 0 and not collision_detected:
+                break
+
+            # Adaptive frame sizing based only on observable outcomes (collisions).
+            if collision_detected:
+                frame_size = min(frame_size * 2, 2048)
+            # The non-compliant 'else' block for frame reduction is removed.
+            # The break condition above now handles termination correctly.
+
+        return len(identified_tags)
+
+    def _calculate_total_time(self) -> float:
+        """Calculates total execution time based on communication costs."""
+        T_reader = self.total_bits_sent_by_reader * 0.025
+        # Note: bits_per_slot varies. This is an aggregate calculation.
+        T_tag = self.total_tag_bits_sent * 0.4
+        T_overhead = (self.total_frames - 1) * 30 if self.total_frames > 1 else 0
+        return T_reader + T_tag + T_overhead
+
+
+协议B：
+import math
+from typing import List, Tuple, Dict
+from collections import defaultdict
+from base import Tag, IProtocol, generate_random_seed
+from hash import simple_hash
+
+class g2_3(IProtocol):
+    """
+    子代协议：带冲突率感知的渐进式深化协议 (Progressive Deepening with Sizing-awareness Protocol)
+
+    本协议通过创新的两阶段方法，高效且准确地解决大规模RFID环境下的众数查询问题。
+    它深度融合了父代协议A和B的核心思想，并引入了全新的动态优化机制。
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        
+        # --- 协议超参数 ---
+        # 阶段一：初筛时的基础帧大小
+        BASE_FRAME_SIZE = 128
+        # 阶段二：对候选者进行深化验证的轮次
+        VERIFICATION_ROUNDS = 3
+        # 阶段二：帧长调整时，冲突率的加权因子
+        COLLISION_SENSITIVITY_FACTOR = 2.5
+        # 候选者选择：选取分数最高的 top N 个价格进入下一轮
+        TOP_K_CANDIDATES = 5
+
+        # --- 时间成本计算器初始化 ---
+        total_bits_sent_by_reader = 0
+        total_slots = 0
+        total_frames = 0
+        
+        # ==================================================================
+        # --- 交叉部分：融合父代A的“逐价扫描”思想与父代B的“估算-验证”两阶段框架 ---
+        # 阶段一: 快速启发式扫描 (Rapid Heuristic Scanning)
+        # ==================================================================
+        # 此阶段类似父代A，对每个价格进行一次探测。
+        # 同时，它作为父代B两阶段框架的第一步，用于快速筛选，而不是直接得出结论。
+        # 我们不仅记录“非空时隙数”（父代A的核心指标），还额外记录“冲突时隙数”，为“突变”部分提供决策依据。
+        
+        price_to_metrics = {} # 存储 {price: {'score': score, 'collisions': collision_count}}
+
+        for p in range(price_min, price_max + 1):
+            total_frames += 1
+            seed = generate_random_seed()
+            
+            # 读写器广播 Select(p), frame_size, seed
+            total_bits_sent_by_reader += p.bit_length() + BASE_FRAME_SIZE.bit_length() + seed.bit_length()
+
+            # --- [物理层模拟] ---
+            slot_states = [0] * BASE_FRAME_SIZE # 0: 空闲, 1: 成功, >1: 冲突
+            for t in tags:
+                if t.price == p:
+                    slot_id = simple_hash(t.id, seed) % BASE_FRAME_SIZE
+                    slot_states[slot_id] += 1
+            # --- [物理层模拟结束] ---
+            
+            total_slots += BASE_FRAME_SIZE
+
+            # --- 读写器分析聚合信号 ---
+            num_non_empty_slots = 0
+            num_collision_slots = 0
+            for count in slot_states:
+                if count > 0:
+                    num_non_empty_slots += 1
+                if count > 1:
+                    num_collision_slots += 1
+            
+            if num_non_empty_slots > 0:
+                price_to_metrics[p] = {
+                    "score": num_non_empty_slots, 
+                    "collisions": num_collision_slots
+                }
+
+        # --- 候选者筛选 ---
+        if not price_to_metrics:
+            # 如果没有探测到任何标签，提前终止
+            T_reader = total_bits_sent_by_reader * 0.025
+            T_tag = total_slots * 1 * 0.4 # 探测阶段每个时隙回复1bit
+            T_overhead = (total_frames - 1) * 30 if total_frames > 1 else 0
+            total_time_ms = T_reader + T_tag + T_overhead
+            return [], 0, total_time_ms, {"phase1_metrics": {}, "phase2_refined_scores": {}}
+
+        # 按初筛分数（非空时隙数）降序排序，选出Top-K候选者
+        sorted_candidates = sorted(
+            price_to_metrics.items(), 
+            key=lambda item: item[1]['score'], 
+            reverse=True
+        )
+        candidate_prices = [item[0] for item in sorted_candidates[:TOP_K_CANDIDATES]]
+
+        # ==================================================================
+        # --- 突变部分：引入“基于冲突率的自适应帧长调整”和“渐进式深化”验证机制 ---
+        # 阶段二: 渐进式深化验证 (Progressive Deepening Verification)
+        # ==================================================================
+        # 此机制在父代A和B中均未出现。
+        # 父代A无验证阶段。父代B的验证阶段（_get_exact_count）虽然也自适应调整帧长，
+        # 但它是在多轮识别循环中“被动地”响应碰撞，且目标是100%精确计数。
+        # 本协议的创新点在于，在验证阶段开始前，就利用第一阶段收集的“冲突率”信息，
+        # “主动地”、“前瞻性地”为每个候选者计算一个量身定制的、更优的初始帧长。
+        # 随后，通过多轮（但非穷尽）的验证来获取一个更稳定、更可靠的启发式分数，
+        # 而非追求绝对精确，从而在开销和准确性之间取得更好的平衡。
+        
+        refined_scores = defaultdict(list)
+
+        for p_candidate in candidate_prices:
+            metrics = price_to_metrics[p_candidate]
+            score = metrics['score']
+            collisions = metrics['collisions']
+
+            # --- 核心突变逻辑 ---
+            # 根据初筛阶段的冲突率计算动态帧长。冲突率越高，说明标签越多，需要的帧长越大。
+            collision_rate = collisions / score if score > 0 else 0
+            dynamic_frame_size = math.ceil(
+                BASE_FRAME_SIZE * (1 + COLLISION_SENSITIVITY_FACTOR * collision_rate)
+            )
+            # 确保帧长在一个合理的范围内
+            dynamic_frame_size = max(32, min(dynamic_frame_size, 4096))
+            
+            # --- 渐进式深化 ---
+            # 使用动态计算出的帧长，进行多轮验证以平滑随机哈希带来的影响
+            for _ in range(VERIFICATION_ROUNDS):
+                total_frames += 1
+                seed = generate_random_seed()
+                
+                total_bits_sent_by_reader += p_candidate.bit_length() + dynamic_frame_size.bit_length() + seed.bit_length()
+
+                # --- [物理层模拟] ---
+                slot_states = [0] * dynamic_frame_size
+                for t in tags:
+                    if t.price == p_candidate:
+                        slot_id = simple_hash(t.id, seed) % dynamic_frame_size
+                        slot_states[slot_id] += 1
+                # --- [物理层模拟结束] ---
+                
+                total_slots += dynamic_frame_size
+                
+                num_non_empty_slots = sum(1 for count in slot_states if count > 0)
+                refined_scores[p_candidate].append(num_non_empty_slots)
+        
+        # --- 最终处理 (Post-processing) ---
+        final_scores = {
+            price: sum(scores) / len(scores) 
+            for price, scores in refined_scores.items()
+        }
+
+        # --- 时间成本计算 ---
+        T_reader = total_bits_sent_by_reader * 0.025
+        # 假设两个阶段每个时隙都只回复1bit用于探测
+        T_tag = total_slots * 1 * 0.4 
+        T_overhead = (total_frames - 1) * 30 if total_frames > 1 else 0
+        total_time_ms = T_reader + T_tag + T_overhead
+        
+        # --- 找出得分最高的众数 ---
+        if not final_scores:
+            # 如果候选者验证后分数都为0，则退回使用第一阶段的结果
+            final_scores = {p: m['score'] for p, m in price_to_metrics.items()}
+
+        if not final_scores:
+             return [], 0, total_time_ms, {"phase1_metrics": price_to_metrics, "phase2_refined_scores": final_scores}
+
+        max_score = max(final_scores.values())
+        modes = sorted([
+            price for price, score in final_scores.items() 
+            if score == max_score
+        ])
+
+        verification_data = {
+            "phase1_metrics": price_to_metrics,
+            "phase2_candidates": candidate_prices,
+            "phase2_refined_scores": final_scores
+        }
+
+        return modes, max_score, total_time_ms, verification_data
+
+

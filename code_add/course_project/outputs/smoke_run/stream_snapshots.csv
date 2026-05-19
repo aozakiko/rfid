@@ -1,0 +1,3 @@
+﻿index,latest_batch,latest_gateway,latest_device,latest_modes,recent_hot_prices,recent_hit_rate,recent_avg_protocol_time_ms,recent_alert_count
+1,1,edge-1,reader-1,[27],"[{""price"": 27, ""count"": 1}]",1.0,16569.83,0
+2,1,edge-2,reader-2,[53],"[{""price"": 27, ""count"": 1}, {""price"": 53, ""count"": 1}]",1.0,16569.88,0

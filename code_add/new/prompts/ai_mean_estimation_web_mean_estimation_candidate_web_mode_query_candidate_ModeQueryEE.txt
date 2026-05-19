@@ -1,0 +1,542 @@
+提示词：任务: 作为一名资深的 RFID 协议设计与优化专家，请基于给定的两个父代 RFID 协议（不要引入任何其他父代协议），创造一个全新的、功能完整的子代协议。
+
+平台背景：
+本平台定位为“面向多维统计场景的 RFID 协议自优化 Web 平台”。生成协议不应被限定为众数查询，而应能根据后续任务画像扩展到均值、方差、标准差、中位数、分位数、基数估计、缺失盘点、热点检测等 RFID/物联网统计任务。请把父代协议中的时隙帧、碰撞利用、位图/草图估计、自适应帧长、分批验证、提前终止、分层抽样等机制抽象成可复用的“协议基因”。
+
+核心设计准则（必须严格遵守）：
+1. 强制交叉（Mandatory Crossover）：新协议的设计必须体现对父代 A 和父代 B 核心思想的深度融合，而不是简单复制其中一个父代。
+2. 强制突变（Mandatory Mutation）：在融合父代思想的基础上，新协议必须引入至少一项父代中没有的优化机制，例如动态帧长、分层采样、草图估计、置信区间修正、候选桶重检、早停策略或多阶段校验。
+3. 任务适配（Task Adaptation）：请等待并服从后续追加的任务画像。若任务画像要求单值估计，execute() 应返回单元素 list；若任务画像要求候选集合，execute() 应返回保守且相关的候选 list。
+4. 准确率与通信开销平衡：优先保证逻辑正确性，同时控制 reader 发送位数、标签响应时隙数和多阶段开销。
+5. 信息隔离原则（Information Isolation Principle）：
+   - 读写器（Reader）：读写器默认已知环境中所有标签 ID 列表作为全局背景信息。协议执行期间，读写器可以广播参数，但它的所有决策和分析只能依据：1) 自己广播过的历史参数；2) 从天线接收到的匿名聚合信号（frame/bit stream/collision sketch）；3) 已知标签 ID 列表。严禁在读写器决策逻辑中直接或间接访问单个标签私有属性，例如 tag.price。
+   - 标签（Tag）：标签响应只能依据：1) 自身私有数据（ID 和数值属性）；2) 当前读写器广播指令。标签不得读取其他标签信息或全局通信结果。
+6. 执行时间计算：代码中必须计算协议执行时间，推荐公式为：
+   TotalTime = T_reader + T_tag + T_overhead
+   T_reader (ms) = total_bits_sent_by_reader * 0.025
+   T_tag (ms) = total_slots * bits_per_slot * 0.4
+   T_overhead (ms) = (total_frames - 1) * 30
+
+执行步骤：
+第一步：交叉（Crossover）- 融合父代基因
+请分析父代 A 和父代 B 的 Python 代码，从它们的帧结构、响应规则、估计逻辑、终止条件和验证数据中提取可复用设计，生成结构完整且逻辑自洽的初始子代协议。
+
+第二步：突变（Mutation）- 引入创新优化
+请在初始子代协议基础上加入一项有意义的新机制。可考虑但不限于：
+1. 动态调整 frame_size、bits_per_slot 或采样轮数；
+2. 用 bitmap/sketch/histogram/quantile summary 替代笨重数据结构；
+3. 增加早停、异常桶重检或置信度修正；
+4. 增加面向多维统计任务的参数化算子，使同一协议骨架可服务不同统计目标。
+
+输出要求：
+1. 生成一个功能完整、符合 IProtocol 接口标准的 Python 类。
+2. 输出只包含可直接保存为 .py 文件运行的代码，不要输出 Markdown 或解释文字。
+3. 代码中请用注释标注：
+   # --- 交叉部分：融合父代 A 的...思想与父代 B 的...思想 ---
+   # --- 突变部分：引入...全新机制 ---
+4. execute(tags, price_min, price_max) 必须返回 (estimated_values, metric, total_time_ms, verification_data)。
+5. verification_data 至少包含 frame_size 和 bits_per_slot；若有多阶段流程，也应包含 stage_frame_sizes、stage_bits_per_slot、total_frames 等可解释指标。
+6. 若仿真中必须读取标签自身属性，请封装在 `_tag_response_*` 或 `_simulate_tag_*` 这类“标签侧响应”函数中；读写器主流程只能接收匿名时隙/位图/碰撞草图结果，不要直接用单个标签私有值做统计决策。
+
+重要提示：下面父代源码中的类名、注释或历史目标可能包含“众数查询”等旧任务描述，它们只代表父代产生时的应用背景。你必须以本提示词后续追加的任务画像和用户自然语言需求为准，只复用父代机制，不继承父代的单一任务目标。
+
+协议A：
+from typing import List, Tuple, Dict, Any
+from collections import defaultdict
+from base import Tag, IProtocol
+
+
+class web_mode_query_candidate(IProtocol):
+    """
+    面向 Web 平台的候选众数查询协议：
+    - 以“价格桶时隙帧”进行匿名聚合估计
+    - 以“候选集分批验证”进行精确复核
+    - 通过自适应帧长、碰撞感知和早停控制通信开销
+
+    输出:
+        estimated_values: 候选众数列表
+        metric: 估计/验证得到的最高频次
+        total_time_ms: 总执行时间
+        verification_data: 可解释协议过程数据
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        value_range = max(0, price_max - price_min + 1)
+
+        if value_range <= 0:
+            verification_data = {
+                "frame_size": 1,
+                "bits_per_slot": 1,
+                "stage_frame_sizes": [],
+                "stage_bits_per_slot": [],
+                "total_frames": 0,
+                "candidate_prices": [],
+                "estimated_bucket_loads": {},
+                "verified_counts": {},
+                "collision_buckets": [],
+                "task_type": "discrete_mode_candidate"
+            }
+            return [], 0, 0.0, verification_data
+
+        num_tags = len(tags)
+
+        total_frames = 0
+        total_bits_sent_by_reader = 0
+        total_slots = 0
+
+        stage_frame_sizes = []
+        stage_bits_per_slot = []
+
+        # --- 交叉部分：融合父代 A 的逐值精确验证思想与父代 B 的整场盘点/匿名聚合思想 ---
+        # 阶段1先对整个价格域执行匿名桶聚合，避免像父代A那样逐价全量精确探测；
+        # 阶段2只对少量高疑似候选值执行精确验证，继承父代A的“精确计数”优点；
+        # 同时保持读写器只接收聚合帧结果，不直接读取标签私有属性。
+
+        # --- 突变部分：引入自适应帧长 + 候选桶重检 + 早停的全新机制 ---
+        # 1) 自适应 frame_size，依据价格域与标签规模调节
+        # 2) 若候选桶碰撞严重，则进行二级重检以细化候选
+        # 3) 精确验证阶段采用分批验证和早停，减少不必要开销
+
+        frame_size_stage1 = self._choose_frame_size(value_range=value_range, num_tags=num_tags)
+        bits_per_slot_stage1 = self._choose_bits_per_slot(value_range=value_range, frame_size=frame_size_stage1)
+        stage_frame_sizes.append(frame_size_stage1)
+        stage_bits_per_slot.append(bits_per_slot_stage1)
+
+        total_frames += 1
+        total_bits_sent_by_reader += self._reader_bits_for_bucket_frame(frame_size_stage1, bits_per_slot_stage1, price_min, price_max)
+        total_slots += frame_size_stage1
+
+        bucket_signal_stage1 = self._simulate_tag_bucket_bitmap_response(
+            tags=tags,
+            price_min=price_min,
+            price_max=price_max,
+            frame_size=frame_size_stage1,
+            bits_per_slot=bits_per_slot_stage1
+        )
+
+        bucket_loads_stage1 = self._decode_bucket_loads(bucket_signal_stage1)
+        candidate_buckets = self._select_top_buckets(bucket_loads_stage1, top_k=min(4, frame_size_stage1))
+        candidate_prices = self._expand_buckets_to_prices(candidate_buckets, price_min, price_max, frame_size_stage1)
+
+        stage2_bucket_loads = {}
+        collision_buckets = [b for b in candidate_buckets if bucket_loads_stage1.get(b, 0) >= 3]
+
+        if collision_buckets and len(candidate_prices) > 1:
+            sub_price_list = self._expand_buckets_to_prices(collision_buckets, price_min, price_max, frame_size_stage1)
+            if sub_price_list:
+                sub_min = min(sub_price_list)
+                sub_max = max(sub_price_list)
+                sub_range = max(1, sub_max - sub_min + 1)
+
+                frame_size_stage2 = self._choose_refine_frame_size(sub_range, len(sub_price_list))
+                bits_per_slot_stage2 = self._choose_bits_per_slot(value_range=sub_range, frame_size=frame_size_stage2)
+
+                stage_frame_sizes.append(frame_size_stage2)
+                stage_bits_per_slot.append(bits_per_slot_stage2)
+
+                total_frames += 1
+                total_bits_sent_by_reader += self._reader_bits_for_bucket_frame(frame_size_stage2, bits_per_slot_stage2, sub_min, sub_max)
+                total_slots += frame_size_stage2
+
+                bucket_signal_stage2 = self._simulate_tag_bucket_bitmap_response_filtered_range(
+                    tags=tags,
+                    active_price_set=set(sub_price_list),
+                    sub_min=sub_min,
+                    sub_max=sub_max,
+                    frame_size=frame_size_stage2,
+                    bits_per_slot=bits_per_slot_stage2
+                )
+                stage2_bucket_loads = self._decode_bucket_loads(bucket_signal_stage2)
+                refined_buckets = self._select_top_buckets(stage2_bucket_loads, top_k=min(4, frame_size_stage2))
+                refined_prices = self._expand_refined_buckets_to_prices(refined_buckets, sub_min, sub_max, frame_size_stage2)
+                candidate_prices = sorted(set([p for p in candidate_prices if p not in sub_price_list] + refined_prices))
+
+        candidate_prices = [p for p in candidate_prices if price_min <= p <= price_max]
+        candidate_prices = sorted(set(candidate_prices))
+
+        if not candidate_prices:
+            verification_data = {
+                "frame_size": frame_size_stage1,
+                "bits_per_slot": bits_per_slot_stage1,
+                "stage_frame_sizes": stage_frame_sizes,
+                "stage_bits_per_slot": stage_bits_per_slot,
+                "total_frames": total_frames,
+                "candidate_prices": [],
+                "estimated_bucket_loads": {int(k): int(v) for k, v in bucket_loads_stage1.items()},
+                "refined_bucket_loads": {int(k): int(v) for k, v in stage2_bucket_loads.items()},
+                "verified_counts": {},
+                "collision_buckets": collision_buckets,
+                "task_type": "discrete_mode_candidate"
+            }
+            total_time_ms = self._compute_total_time(
+                total_bits_sent_by_reader=total_bits_sent_by_reader,
+                total_slots=total_slots,
+                bits_per_slot=max(stage_bits_per_slot) if stage_bits_per_slot else 1,
+                total_frames=total_frames
+            )
+            return [], 0, total_time_ms, verification_data
+
+        max_candidates_to_verify = min(6, max(2, len(candidate_prices)))
+        candidate_prices = candidate_prices[:max_candidates_to_verify]
+
+        verified_counts = {}
+        best_count = -1
+        best_prices = []
+
+        verification_batch_size = min(3, len(candidate_prices))
+        idx = 0
+        remaining_upper_bound = max(num_tags, 0)
+
+        while idx < len(candidate_prices):
+            batch = candidate_prices[idx: idx + verification_batch_size]
+
+            batch_frame_size = min(32768, max(1, len(batch)))
+            batch_bits_per_slot = min(256, 16)
+            stage_frame_sizes.append(batch_frame_size)
+            stage_bits_per_slot.append(batch_bits_per_slot)
+
+            total_frames += 1
+            total_bits_sent_by_reader += self._reader_bits_for_verify_frame(batch)
+            total_slots += batch_frame_size
+
+            batch_counts = self._simulate_tag_exact_count_batch(tags=tags, candidate_prices=batch)
+
+            for price in batch:
+                count = int(batch_counts.get(price, 0))
+                verified_counts[price] = count
+                if count > best_count:
+                    best_count = count
+                    best_prices = [price]
+                elif count == best_count:
+                    best_prices.append(price)
+
+            idx += verification_batch_size
+
+            remaining_unverified = len(candidate_prices) - idx
+            rough_bucket_ceiling = self._estimate_remaining_upper_bound(
+                candidate_prices=candidate_prices[idx:],
+                price_min=price_min,
+                price_max=price_max,
+                frame_size=frame_size_stage1,
+                bucket_loads_stage1=bucket_loads_stage1
+            )
+            remaining_upper_bound = min(num_tags, rough_bucket_ceiling if rough_bucket_ceiling > 0 else num_tags)
+
+            if best_count >= remaining_upper_bound:
+                break
+
+        best_prices = sorted(set(best_prices))
+        metric = max(best_count, 0)
+
+        verification_data = {
+            "frame_size": frame_size_stage1,
+            "bits_per_slot": bits_per_slot_stage1,
+            "stage_frame_sizes": stage_frame_sizes,
+            "stage_bits_per_slot": stage_bits_per_slot,
+            "total_frames": total_frames,
+            "candidate_prices": candidate_prices,
+            "estimated_bucket_loads": {int(k): int(v) for k, v in bucket_loads_stage1.items()},
+            "refined_bucket_loads": {int(k): int(v) for k, v in stage2_bucket_loads.items()},
+            "verified_counts": {int(k): int(v) for k, v in verified_counts.items()},
+            "collision_buckets": [int(b) for b in collision_buckets],
+            "task_type": "discrete_mode_candidate",
+            "early_stop_triggered": idx < len(candidate_prices)
+        }
+
+        total_time_ms = self._compute_total_time(
+            total_bits_sent_by_reader=total_bits_sent_by_reader,
+            total_slots=total_slots,
+            bits_per_slot=max(stage_bits_per_slot) if stage_bits_per_slot else 1,
+            total_frames=total_frames
+        )
+
+        return best_prices, metric, total_time_ms, verification_data
+
+    def _choose_frame_size(self, value_range: int, num_tags: int) -> int:
+        if value_range <= 1:
+            return 1
+        base = 1
+        target = min(32768, max(8, min(value_range, max(num_tags * 2, 16))))
+        while base < target:
+            base <<= 1
+        return min(32768, max(1, base))
+
+    def _choose_refine_frame_size(self, sub_range: int, candidate_count: int) -> int:
+        target = min(32768, max(8, min(sub_range, max(candidate_count * 4, 16))))
+        base = 1
+        while base < target:
+            base <<= 1
+        return min(32768, max(1, base))
+
+    def _choose_bits_per_slot(self, value_range: int, frame_size: int) -> int:
+        if frame_size <= 1:
+            return 1
+        density = float(value_range) / float(frame_size)
+        if density <= 1.5:
+            return 2
+        if density <= 4:
+            return 3
+        return 4
+
+    def _reader_bits_for_bucket_frame(self, frame_size: int, bits_per_slot: int, price_min: int, price_max: int) -> int:
+        return int(64 + 16 + 8 + 32 + 32 + 16 + frame_size.bit_length() + bits_per_slot.bit_length() + abs(price_max - price_min + 1).bit_length())
+
+    def _reader_bits_for_verify_frame(self, candidate_prices: List[int]) -> int:
+        return int(48 + 16 + 16 * len(candidate_prices))
+
+    def _bucket_index_for_price(self, price: int, price_min: int, price_max: int, frame_size: int) -> int:
+        value_range = max(1, price_max - price_min + 1)
+        relative = price - price_min
+        idx = int((relative * frame_size) / value_range)
+        if idx >= frame_size:
+            idx = frame_size - 1
+        if idx < 0:
+            idx = 0
+        return idx
+
+    def _simulate_tag_bucket_bitmap_response(
+        self,
+        tags: List[Tag],
+        price_min: int,
+        price_max: int,
+        frame_size: int,
+        bits_per_slot: int
+    ) -> List[int]:
+        slot_counts = [0] * frame_size
+        for tag in tags:
+            price = getattr(tag, "price", None)
+            if price is None:
+                continue
+            if price_min <= price <= price_max:
+                idx = self._bucket_index_for_price(price, price_min, price_max, frame_size)
+                slot_counts[idx] += 1
+        max_encodable = (1 << bits_per_slot) - 1
+        return [min(c, max_encodable) for c in slot_counts]
+
+    def _simulate_tag_bucket_bitmap_response_filtered_range(
+        self,
+        tags: List[Tag],
+        active_price_set: set,
+        sub_min: int,
+        sub_max: int,
+        frame_size: int,
+        bits_per_slot: int
+    ) -> List[int]:
+        slot_counts = [0] * frame_size
+        for tag in tags:
+            price = getattr(tag, "price", None)
+            if price is None:
+                continue
+            if price in active_price_set and sub_min <= price <= sub_max:
+                idx = self._bucket_index_for_price(price, sub_min, sub_max, frame_size)
+                slot_counts[idx] += 1
+        max_encodable = (1 << bits_per_slot) - 1
+        return [min(c, max_encodable) for c in slot_counts]
+
+    def _decode_bucket_loads(self, bucket_signal: List[int]) -> Dict[int, int]:
+        return {i: int(v) for i, v in enumerate(bucket_signal) if v > 0}
+
+    def _select_top_buckets(self, bucket_loads: Dict[int, int], top_k: int) -> List[int]:
+        if not bucket_loads:
+            return []
+        sorted_items = sorted(bucket_loads.items(), key=lambda x: (-x[1], x[0]))
+        if not sorted_items:
+            return []
+        cutoff_idx = min(len(sorted_items), max(1, top_k)) - 1
+        cutoff = sorted_items[cutoff_idx][1]
+        selected = [b for b, v in sorted_items if v >= cutoff]
+        return selected[:max(top_k, len(selected))]
+
+    def _expand_buckets_to_prices(self, buckets: List[int], price_min: int, price_max: int, frame_size: int) -> List[int]:
+        result = []
+        value_range = max(1, price_max - price_min + 1)
+        for b in buckets:
+            low = price_min + (b * value_range) // frame_size
+            high = price_min + ((b + 1) * value_range) // frame_size - 1
+            if b == frame_size - 1:
+                high = price_max
+            low = max(low, price_min)
+            high = min(high, price_max)
+            if low <= high:
+                if low == high:
+                    result.append(low)
+                else:
+                    width = high - low + 1
+                    if width <= 3:
+                        result.extend(range(low, high + 1))
+                    else:
+                        mid = (low + high) // 2
+                        result.extend(sorted(set([low, mid, high])))
+        return sorted(set(result))
+
+    def _expand_refined_buckets_to_prices(self, buckets: List[int], sub_min: int, sub_max: int, frame_size: int) -> List[int]:
+        return self._expand_buckets_to_prices(buckets, sub_min, sub_max, frame_size)
+
+    def _simulate_tag_exact_count_batch(self, tags: List[Tag], candidate_prices: List[int]) -> Dict[int, int]:
+        counts = {p: 0 for p in candidate_prices}
+        candidate_set = set(candidate_prices)
+        for tag in tags:
+            price = getattr(tag, "price", None)
+            if price in candidate_set:
+                counts[price] += 1
+        return counts
+
+    def _estimate_remaining_upper_bound(
+        self,
+        candidate_prices: List[int],
+        price_min: int,
+        price_max: int,
+        frame_size: int,
+        bucket_loads_stage1: Dict[int, int]
+    ) -> int:
+        if not candidate_prices:
+            return 0
+        max_bound = 0
+        for p in candidate_prices:
+            b = self._bucket_index_for_price(p, price_min, price_max, frame_size)
+            max_bound = max(max_bound, bucket_loads_stage1.get(b, 0))
+        return max_bound
+
+    def _compute_total_time(self, total_bits_sent_by_reader: int, total_slots: int, bits_per_slot: int, total_frames: int) -> float:
+        T_reader = total_bits_sent_by_reader * 0.025
+        T_tag = total_slots * bits_per_slot * 0.4
+        T_overhead = (total_frames - 1) * 30 if total_frames > 1 else 0
+        return float(T_reader + T_tag + T_overhead)
+
+
+
+协议B：
+# protocol/ModeQueryEE.py
+
+import math
+import time
+from typing import List, Tuple, Dict
+from base import Tag, IProtocol
+
+class ModeQueryEE(IProtocol):
+    """
+    修正版协议：基于精确计数的“逐价清点”众数查询法
+    
+    本协议的核心思想保持不变：对每个可能的价格，通过反复寻找并计数拥有该价格
+    的标签，来获得该价格的精确数量。此版本经过重构，严格遵守了信息隔离原则
+    和逻辑正确性标准。
+    
+    优点:
+    - 正确性极高：由于是精确计数，最终结果100%正确。
+    
+    缺点:
+    - 效率极低：执行时间与 (价格范围 * 众数平均数量) 成正比。
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        total_time_ms = 0.0
+        price_exact_counts = {}
+
+        # --- 协议超参数 (用于EE子协议模拟) ---
+        EE_FRAME_SLOTS = 16
+        TAG_ID_BITS = 32
+        TIME_PER_EE_FRAME_MS = 58.8  # (2*0.2*32*1) + (16*1.0) + 30.0 = 58.8 ms
+        TIME_PER_SILENT_CMD_MS = 6.4
+
+        # --- 读写器逻辑: 遍历所有价格并发起计数指令 ---
+        for p in range(price_min, price_max + 1):
+            
+            # --- [物理层模拟] ---
+            # 读写器广播一个高级指令：“开始对价格p进行精确计数”。
+            # 以下代码块模拟了物理层执行该指令的全过程，读写器无法看到内部细节。
+            
+            # 1. 物理层根据读写器广播的p，确定响应的标签群体
+            current_price_tags_dict = {t.id: t for t in tags if t.price == p}
+            
+            count_for_p = 0
+            time_cost_for_p = 0.0
+            
+            if current_price_tags_dict:
+                # 2. 物理层反复执行EE子协议来寻找并“静默”最小ID的标签
+                while current_price_tags_dict:
+                    # a. 模拟一次EE协议以找到当前群体中的最小ID
+                    if not current_price_tags_dict: break
+                    
+                    time_cost_for_ee_round = 0.0
+                    all_ids = list(current_price_tags_dict.keys())
+                    l_bound, h_bound = min(all_ids), max(all_ids) + 1
+
+                    while (h_bound - l_bound) > 1:
+                        time_cost_for_ee_round += TIME_PER_EE_FRAME_MS
+                        d = (h_bound - l_bound) / EE_FRAME_SLOTS
+                        if d == 0: break
+
+                        min_slot_idx_found = float('inf')
+                        for tag_id in current_price_tags_dict:
+                            if l_bound <= tag_id < h_bound:
+                                slot_idx = math.floor((tag_id - l_bound) / d)
+                                if slot_idx < min_slot_idx_found:
+                                    min_slot_idx_found = slot_idx
+                        
+                        if min_slot_idx_found != float('inf'):
+                            first_non_empty_slot = int(min_slot_idx_found)
+                            new_l = l_bound + math.ceil(d * first_non_empty_slot)
+                            new_h = l_bound + math.ceil(d * (first_non_empty_slot + 1))
+                            l_bound, h_bound = int(new_l), int(new_h)
+                        else:
+                            break
+                    
+                    min_id = int(l_bound)
+                    found_tag = current_price_tags_dict.get(min_id)
+                    time_cost_for_p += time_cost_for_ee_round
+
+                    # b. 如果找到，计数+1，并模拟使其静默
+                    if found_tag:
+                        count_for_p += 1
+                        del current_price_tags_dict[found_tag.id]
+                        time_cost_for_p += TIME_PER_SILENT_CMD_MS
+                    else:
+                        # 理论上应该总能找到，除非l_bound计算有误或字典为空
+                        break
+            
+            # --- [物理层模拟结束] ---
+
+            # --- 读写器接收聚合结果并更新状态 ---
+            # 读写器只得到一个最终计数值和总开销
+            if count_for_p > 0:
+                price_exact_counts[p] = count_for_p
+                total_time_ms += time_cost_for_p
+        
+        # --- 读写器在本地进行最终结果分析 ---
+        max_count = 0
+        modes = []
+        
+        if price_exact_counts:
+            max_count = max(price_exact_counts.values())
+            if max_count > 0:
+                # [修正] 找出所有达到最大计数的众数
+                modes = sorted([
+                    price for price, count in price_exact_counts.items() 
+                    if count == max_count
+                ])
+
+        verification_data = {
+            "ee_frame_slots": EE_FRAME_SLOTS,
+            "final_exact_counts": price_exact_counts
+        }
+        
+        return modes, max_count, total_time_ms, verification_data
+
+任务画像：
+- 任务类型：连续数值均值估计
+- 优化目标：面向工业传感 RFID，估计标签携带连续数值属性的总体均值，并控制通信开销。
+- 输出约定：返回一个只包含均值估计值的列表，例如 [estimated_mean]。
+- 用户需求：面向工业物联网多维统计场景，生成一个在通信开销、估计精度和物理层约束之间平衡的 RFID 协议。
+
+平台定位：
+本平台不是只面向众数查询，而是面向多维统计场景的 RFID 协议自优化平台。你需要把父代协议中的时隙帧、碰撞利用、位图/草图估计、自适应帧长、分批验证等机制抽象成可复用的协议基因，并针对当前任务画像生成可执行的专用协议。
+
+附加硬性要求：
+1. 输出必须是完整的 Python 文件内容，不要输出 Markdown、解释文字或额外说明。
+2. 生成类名必须严格为 web_mean_estimation_candidate，且该类必须继承 IProtocol。
+3. 文件内必须包含必要 import，使代码可直接保存为 web_mean_estimation_candidate.py 后运行。
+4. execute() 必须返回 (estimated_values, metric, total_time_ms, verification_data)。estimated_values 必须是 list；对于均值、方差、中位数、分位数、基数等单值估计任务，返回单元素列表。
+5. verification_data 至少必须包含 frame_size 和 bits_per_slot；如果存在多阶段，还应补充 stage_frame_sizes 与 stage_bits_per_slot。
+6. 优先保证约束验证能通过：bits_per_slot <= 256，frame_size <= 32768。
+7. 仍然必须遵守信息隔离原则，不允许读写器直接依据 tag.price 做决策；如果仿真需要标签读取自身属性，请封装到 `_tag_response_*` 或 `_simulate_tag_*` 方法中，读写器主流程只处理匿名聚合帧。
+8. 对 execute() 返回的 estimated_values 必须保守，不要通过猜测堆出大量候选值；宁可少报，也不要返回明显无关的大列表。

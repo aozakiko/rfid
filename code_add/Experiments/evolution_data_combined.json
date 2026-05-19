@@ -1,0 +1,325 @@
+{
+  "single_peak": {
+    "base_algorithms": [
+      { "name": "SEM", "accuracy": 1.0, "time": 205078.15, "fitness": 0.99 },
+      { "name": "TPK", "accuracy": 0.7455, "time": 38492.38, "fitness": 0.3 },
+      { "name": "TCS", "accuracy": 1.0, "time": 81763.51, "fitness": 0.9974 },
+      { "name": "ExtremumEstimation", "accuracy": 1.0, "time": 4341549.2, "fitness": 0.7417 },
+      { "name": "Polling", "accuracy": 1.0, "time": 904000.0, "fitness": 0.9481 }
+    ],
+    "generations": [
+      {
+        "generation": 1,
+        "individuals": [
+          { "name": "TCS", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 81763.5, "fitness": 0.9974 },
+          { "name": "g1_1", "parent_A": "SEM", "parent_B": "TCS", "correction_count": 1, "accuracy": 1.0, "time": 103673.03, "fitness": 0.9961 },
+          { "name": "SEM", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 205078.15, "fitness": 0.99 },
+          { "name": "g1_4", "parent_A": "Polling", "parent_B": "TPK", "correction_count": 1, "accuracy": 1.0, "time": 864410.27, "fitness": 0.9504 },
+          { "name": "Polling", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 904000.0, "fitness": 0.9481 },
+          { "name": "g1_5", "parent_A": "TCS", "parent_B": "ExtremumEstimation", "correction_count": 1, "accuracy": 1.0, "time": 977145.73, "fitness": 0.9437 },
+          { "name": "g1_2", "parent_A": "TCS", "parent_B": "Polling", "correction_count": 1, "accuracy": 1.0, "time": 1007361.85, "fitness": 0.9419 },
+          { "name": "g1_3", "parent_A": "SEM", "parent_B": "ExtremumEstimation", "correction_count": 1, "accuracy": 1.0, "time": 5037078.16, "fitness": 0.7 },
+          { "name": "TPK", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 0.7455, "time": 38492.38, "fitness": 0.3 },
+          { "name": "ExtremumEstimation", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 4341549.2, "fitness": 0.7417 }
+        ]
+      },
+      {
+        "generation": 2,
+        "individuals": [
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 1.0 },
+          { "name": "TCS", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 81763.51, "fitness": 0.9869 },
+          { "name": "g2_5", "parent_A": "g1_4", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 82656.36, "fitness": 0.9866 },
+          { "name": "g1_1", "parent_A": "SEM", "parent_B": "TCS", "correction_count": 1, "accuracy": 1.0, "time": 103673.03, "fitness": 0.9792 },
+          { "name": "g2_2", "parent_A": "g1_1", "parent_B": "SEM", "correction_count": 1, "accuracy": 1.0, "time": 105333.12, "fitness": 0.9787 },
+          { "name": "SEM", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 205078.15, "fitness": 0.9439 },
+          { "name": "g2_3", "parent_A": "SEM", "parent_B": "Polling", "correction_count": 1, "accuracy": 1.0, "time": 747679.76, "fitness": 0.7548 },
+          { "name": "g1_4", "parent_A": "Polling", "parent_B": "TPK", "correction_count": 1, "accuracy": 1.0, "time": 864410.27, "fitness": 0.7141 },
+          { "name": "Polling", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 904000.0, "fitness": 0.7003 },
+          { "name": "g2_4", "parent_A": "Polling", "parent_B": "g1_4", "correction_count": 0, "accuracy": 1.0, "time": 904952.91, "fitness": 0.7 }
+        ]
+      },
+      {
+        "generation": 3,
+        "individuals": [
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 1.0 },
+          { "name": "TCS", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 81763.51, "fitness": 0.9759 },
+          { "name": "g2_5", "parent_A": "g1_4", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 82656.36, "fitness": 0.9753 },
+          { "name": "g3_3", "parent_A": "g2_5", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 103212.71, "fitness": 0.9622 },
+          { "name": "g3_4", "parent_A": "g1_1", "parent_B": "g2_2", "correction_count": 0, "accuracy": 1.0, "time": 103514.73, "fitness": 0.962 },
+          { "name": "g1_1", "parent_A": "SEM", "parent_B": "TCS", "correction_count": 1, "accuracy": 1.0, "time": 103673.03, "fitness": 0.9619 },
+          { "name": "g2_2", "parent_A": "g1_1", "parent_B": "SEM", "correction_count": 1, "accuracy": 1.0, "time": 105333.12, "fitness": 0.9608 },
+          { "name": "g3_1", "parent_A": "g2_1", "parent_B": "TCS", "correction_count": 1, "accuracy": 1.0, "time": 205838.61, "fitness": 0.8965 },
+          { "name": "g3_2", "parent_A": "TCS", "parent_B": "g2_5", "correction_count": 0, "accuracy": 1.0, "time": 210663.46, "fitness": 0.8934 },
+          { "name": "g3_5", "parent_A": "g2_2", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 513039.11, "fitness": 0.7 }
+        ]
+      },
+      {
+        "generation": 4,
+        "individuals": [
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 1.0 },
+          { "name": "g4_1", "parent_A": "g2_1", "parent_B": "g2_5", "correction_count": 1, "accuracy": 1.0, "time": 57597.59, "fitness": 0.9318 },
+          { "name": "g4_3", "parent_A": "g3_4", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 59187.24, "fitness": 0.9238 },
+          { "name": "TCS", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 81763.51, "fitness": 0.8099 },
+          { "name": "g2_5", "parent_A": "g1_4", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 82656.36, "fitness": 0.8054 },
+          { "name": "g4_4", "parent_A": "TCS", "parent_B": "g3_3", "correction_count": 0, "accuracy": 1.0, "time": 83128.36, "fitness": 0.803 },
+          { "name": "g3_3", "parent_A": "g2_5", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 103212.71, "fitness": 0.7016 },
+          { "name": "g4_5", "parent_A": "g3_3", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 103366.36, "fitness": 0.7008 },
+          { "name": "g3_4", "parent_A": "g1_1", "parent_B": "g2_2", "correction_count": 0, "accuracy": 1.0, "time": 103514.73, "fitness": 0.7001 },
+          { "name": "g4_2", "parent_A": "g2_5", "parent_B": "g3_4", "correction_count": 0, "accuracy": 1.0, "time": 103532.09, "fitness": 0.7 }
+        ]
+      },
+      {
+        "generation": 5,
+        "individuals": [
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 1.0 },
+          { "name": "g5_2", "parent_A": "g4_1", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 57036.79, "fitness": 0.9022 },
+          { "name": "g5_1", "parent_A": "g2_1", "parent_B": "g4_1", "correction_count": 1, "accuracy": 1.0, "time": 57086.66, "fitness": 0.9018 },
+          { "name": "g5_5", "parent_A": "g4_3", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 57430.78, "fitness": 0.8992 },
+          { "name": "g4_1", "parent_A": "g2_1", "parent_B": "g2_5", "correction_count": 1, "accuracy": 1.0, "time": 57597.59, "fitness": 0.8979 },
+          { "name": "g4_3", "parent_A": "g3_4", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 59187.24, "fitness": 0.8859 },
+          { "name": "g5_4", "parent_A": "g2_5", "parent_B": "g4_3", "correction_count": 0, "accuracy": 1.0, "time": 65593.96, "fitness": 0.8375 },
+          { "name": "TCS", "parent_A": null, "parent_B": null, "correction_count": 0, "accuracy": 1.0, "time": 81763.51, "fitness": 0.7153 },
+          { "name": "g2_5", "parent_A": "g1_4", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 82656.36, "fitness": 0.7086 },
+          { "name": "g5_3", "parent_A": "TCS", "parent_B": "g2_5", "correction_count": 0, "accuracy": 1.0, "time": 83791.61, "fitness": 0.7 }
+        ]
+      },
+      {
+        "generation": 6,
+        "individuals": [
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 1.0 },
+          { "name": "g6_3", "parent_A": "g5_5", "parent_B": "g4_1", "correction_count": 0, "accuracy": 1.0, "time": 51830.2, "fitness": 0.9532 },
+          { "name": "g6_1", "parent_A": "g2_1", "parent_B": "g5_1", "correction_count": 0, "accuracy": 1.0, "time": 57001.61, "fitness": 0.922 },
+          { "name": "g5_2", "parent_A": "g4_1", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 57036.79, "fitness": 0.9218 },
+          { "name": "g5_1", "parent_A": "g2_1", "parent_B": "g4_1", "correction_count": 1, "accuracy": 1.0, "time": 57086.66, "fitness": 0.9215 },
+          { "name": "g5_5", "parent_A": "g4_3", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 57430.78, "fitness": 0.9194 },
+          { "name": "g4_1", "parent_A": "g2_1", "parent_B": "g2_5", "correction_count": 1, "accuracy": 1.0, "time": 57597.59, "fitness": 0.9184 },
+          { "name": "g6_2", "parent_A": "g5_1", "parent_B": "g5_5", "correction_count": 0, "accuracy": 1.0, "time": 60571.42, "fitness": 0.9004 },
+          { "name": "g6_5", "parent_A": "g5_2", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 86806.05, "fitness": 0.7418 },
+          { "name": "g6_4", "parent_A": "g4_1", "parent_B": "g5_2", "correction_count": 0, "accuracy": 1.0, "time": 93727.15, "fitness": 0.7 }
+        ]
+      },
+      {
+        "generation": 7,
+        "individuals": [
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 1.0 },
+          { "name": "g7_5", "parent_A": "g6_1", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 47837.14, "fitness": 0.9427 },
+          { "name": "g6_3", "parent_A": "g5_5", "parent_B": "g4_1", "correction_count": 0, "accuracy": 1.0, "time": 51830.2, "fitness": 0.8817 },
+          { "name": "g7_3", "parent_A": "g5_1", "parent_B": "g5_2", "correction_count": 0, "accuracy": 1.0, "time": 56883.67, "fitness": 0.8045 },
+          { "name": "g6_1", "parent_A": "g2_1", "parent_B": "g5_1", "correction_count": 0, "accuracy": 1.0, "time": 57001.61, "fitness": 0.8027 },
+          { "name": "g5_2", "parent_A": "g4_1", "parent_B": "TCS", "correction_count": 0, "accuracy": 1.0, "time": 57036.79, "fitness": 0.8021 },
+          { "name": "g5_1", "parent_A": "g2_1", "parent_B": "g4_1", "correction_count": 1, "accuracy": 1.0, "time": 57086.66, "fitness": 0.8014 },
+          { "name": "g7_1", "parent_A": "g2_1", "parent_B": "g6_3", "correction_count": 0, "accuracy": 1.0, "time": 58103.91, "fitness": 0.7858 },
+          { "name": "g7_4", "parent_A": "g5_2", "parent_B": "g6_1", "correction_count": 0, "accuracy": 1.0, "time": 60430.54, "fitness": 0.7503 },
+          { "name": "g7_2", "parent_A": "g6_3", "parent_B": "g5_1", "correction_count": 0, "accuracy": 1.0, "time": 63720.67, "fitness": 0.7 }
+        ]
+      },
+      {
+        "generation": 8,
+        "individuals": [
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 1.0 },
+          { "name": "g8_2", "parent_A": "g7_3", "parent_B": "g6_1", "correction_count": 0, "accuracy": 1.0, "time": 44163.24, "fitness": 0.9993 },
+          { "name": "g8_1", "parent_A": "g2_1", "parent_B": "g7_3", "correction_count": 0, "accuracy": 1.0, "time": 45124.36, "fitness": 0.9902 },
+          { "name": "g8_3", "parent_A": "g6_1", "parent_B": "g7_5", "correction_count": 0, "accuracy": 1.0, "time": 46224.87, "fitness": 0.9797 },
+          { "name": "g7_5", "parent_A": "g6_1", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 47837.14, "fitness": 0.9643 },
+          { "name": "g6_3", "parent_A": "g5_5", "parent_B": "g4_1", "correction_count": 0, "accuracy": 1.0, "time": 51830.2, "fitness": 0.9263 },
+          { "name": "g7_3", "parent_A": "g5_1", "parent_B": "g5_2", "correction_count": 0, "accuracy": 1.0, "time": 56883.67, "fitness": 0.8782 },
+          { "name": "g6_1", "parent_A": "g2_1", "parent_B": "g5_1", "correction_count": 0, "accuracy": 1.0, "time": 57001.61, "fitness": 0.8771 },
+          { "name": "g8_4", "parent_A": "g7_5", "parent_B": "g6_3", "correction_count": 0, "accuracy": 1.0, "time": 67703.26, "fitness": 0.7752 },
+          { "name": "g8_5", "parent_A": "g7_5", "parent_B": "g7_3", "correction_count": 0, "accuracy": 1.0, "time": 75599.63, "fitness": 0.7 }
+        ]
+      },
+      {
+        "generation": 9,
+        "individuals": [
+          { "name": "g9_2", "parent_A": "g8_2", "parent_B": "g8_1", "correction_count": 0, "accuracy": 1.0, "time": 34505.19, "fitness": 1.0 },
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 0.94 },
+          { "name": "g8_2", "parent_A": "g7_3", "parent_B": "g6_1", "correction_count": 0, "accuracy": 1.0, "time": 44163.24, "fitness": 0.9395 },
+          { "name": "g9_5", "parent_A": "g7_5", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 44600.91, "fitness": 0.9368 },
+          { "name": "g8_1", "parent_A": "g2_1", "parent_B": "g7_3", "correction_count": 0, "accuracy": 1.0, "time": 45124.36, "fitness": 0.9335 },
+          { "name": "g9_4", "parent_A": "g8_3", "parent_B": "g7_5", "correction_count": 0, "accuracy": 1.0, "time": 45295.21, "fitness": 0.9325 },
+          { "name": "g8_3", "parent_A": "g6_1", "parent_B": "g7_5", "correction_count": 0, "accuracy": 1.0, "time": 46224.87, "fitness": 0.9266 },
+          { "name": "g7_5", "parent_A": "g6_1", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 47837.14, "fitness": 0.9165 },
+          { "name": "g9_3", "parent_A": "g8_1", "parent_B": "g8_3", "correction_count": 0, "accuracy": 1.0, "time": 59684.78, "fitness": 0.8424 },
+          { "name": "g9_1", "parent_A": "g2_1", "parent_B": "g8_2", "correction_count": 0, "accuracy": 1.0, "time": 82427.54, "fitness": 0.7 }
+        ]
+      },
+      {
+        "generation": 10,
+        "individuals": [
+          { "name": "g10_4", "parent_A": "g8_1", "parent_B": "g9_2", "correction_count": 0, "accuracy": 1.0, "time": 20913.24, "fitness": 1.0 },
+          { "name": "g10_5", "parent_A": "g9_2", "parent_B": "g8_2", "correction_count": 0, "accuracy": 1.0, "time": 28850.37, "fitness": 0.9621 },
+          { "name": "g10_1", "parent_A": "g9_2", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 34335.92, "fitness": 0.9358 },
+          { "name": "g9_2", "parent_A": "g8_2", "parent_B": "g8_1", "correction_count": 0, "accuracy": 1.0, "time": 34505.19, "fitness": 0.935 },
+          { "name": "g2_1", "parent_A": "TCS", "parent_B": "g1_1", "correction_count": 1, "accuracy": 1.0, "time": 44090.83, "fitness": 0.8892 },
+          { "name": "g8_2", "parent_A": "g7_3", "parent_B": "g6_1", "correction_count": 0, "accuracy": 1.0, "time": 44163.24, "fitness": 0.8889 },
+          { "name": "g9_5", "parent_A": "g7_5", "parent_B": "g2_1", "correction_count": 0, "accuracy": 1.0, "time": 44600.91, "fitness": 0.8868 },
+          { "name": "g8_1", "parent_A": "g2_1", "parent_B": "g7_3", "correction_count": 0, "accuracy": 1.0, "time": 45124.36, "fitness": 0.8843 },
+          { "name": "g10_2", "parent_A": "g2_1", "parent_B": "g9_5", "correction_count": 0, "accuracy": 1.0, "time": 62025.22, "fitness": 0.8035 },
+          { "name": "g10_3", "parent_A": "g9_5", "parent_B": "g8_1", "correction_count": 0, "accuracy": 1.0, "time": 83676.74, "fitness": 0.7 }
+        ]
+      }
+    ]
+  },
+  "multi_peak": {
+    "base_algorithms": [
+        { "name": "SEM", "accuracy": 1.0, "time": 205078.15 },
+        { "name": "TPK", "accuracy": 1.0, "time": 384092.0 },
+        { "name": "TCS", "accuracy": 1.0, "time": 820986.38 },
+        { "name": "Polling", "accuracy": 1.0, "time": 4520000.0 },
+        { "name": "ExtremumEstimation", "accuracy": 1.0, "time": 25637279.44 }
+    ],
+    "generations": [
+        {
+            "generation": 1,
+            "individuals": [
+                { "name": "SEM", "time": 205078.15 },
+                { "name": "TPK", "time": 384092.0 },
+                { "name": "TCS", "time": 820986.38 },
+                { "name": "g1_5", "parent_A": "TCS", "parent_B": "TPK", "correction_count": 1, "time": 821116.34 },
+                { "name": "g1_4", "parent_A": "Polling", "parent_B": "TPK", "correction_count": 1, "time": 1476795.12 },
+                { "name": "g1_2", "parent_A": "TCS", "parent_B": "Polling", "correction_count": 1, "time": 2318954.47 },
+                { "name": "Polling", "time": 4520000.0 },
+                { "name": "g1_3", "parent_A": "SEM", "parent_B": "ExtremumEstimation", "correction_count": 1, "time": 5120170.34 },
+                { "name": "g1_1", "parent_A": "SEM", "parent_B": "TCS", "correction_count": 1, "time": 5120215.24 },
+                { "name": "ExtremumEstimation", "time": 25637279.44 }
+            ]
+        },
+        {
+            "generation": 2,
+            "individuals": [
+                { "name": "g2_3", "parent_A": "TCS", "parent_B": "g1_5", "correction_count": 1, "time": 56802.59 },
+                { "name": "g2_2", "parent_A": "TPK", "parent_B": "g1_5", "correction_count": 1, "time": 63889.73 },
+                { "name": "SEM", "correction_count": 1, "time": 205078.15 },
+                { "name": "TPK", "correction_count": 1, "time": 384092.0 },
+                { "name": "g2_5", "parent_A": "g1_4", "parent_B": "SEM", "correction_count": 1, "time": 513501.4 },
+                { "name": "g2_4", "parent_A": "g1_5", "parent_B": "g1_4", "correction_count": 1, "time": 578380.46 },
+                { "name": "TCS", "correction_count": 1, "time": 820986.38 },
+                { "name": "g1_5", "parent_A": "TCS", "parent_B": "TPK", "correction_count": 1, "time": 821116.34 },
+                { "name": "g2_1", "parent_A": "SEM", "parent_B": "TPK", "correction_count": 1, "time": 1373765.28 },
+                { "name": "g1_4", "parent_A": "Polling", "parent_B": "TPK", "correction_count": 1, "time": 1476795.12 }
+            ]
+        },
+        {
+            "generation": 3,
+            "individuals": [
+                { "name": "g3_2", "parent_A": "g2_3", "parent_B": "SEM", "correction_count": 1, "time": 52837.18 },
+                { "name": "g2_3", "parent_A": "TCS", "parent_B": "g1_5", "correction_count": 1, "time": 56802.59 },
+                { "name": "g3_5", "parent_A": "TPK", "parent_B": "g2_2", "correction_count": 1, "time": 58943.06 },
+                { "name": "g2_2", "parent_A": "TPK", "parent_B": "g1_5", "correction_count": 1, "time": 63889.73 },
+                { "name": "g3_1", "parent_A": "g2_2", "parent_B": "g2_3", "correction_count": 1, "time": 110625.51 },
+                { "name": "SEM", "parent_A": null, "parent_B": null, "correction_count": 1, "time": 205078.15 },
+                { "name": "g3_3", "parent_A": "SEM", "parent_B": "g2_5", "correction_count": 1, "time": 216954.25 },
+                { "name": "TPK", "parent_A": null, "parent_B": null, "correction_count": 1, "time": 384092.0 },
+                { "name": "g2_5", "parent_A": "g1_4", "parent_B": "SEM", "correction_count": 1, "time": 513501.4 },
+                { "name": "g3_4", "parent_A": "g2_5", "parent_B": "TPK", "correction_count": 1, "time": 635000.83 }
+            ]
+        },
+        {
+            "generation": 4,
+            "individuals": [
+                { "name": "g3_2", "parent_A": "g2_3", "parent_B": "SEM", "correction_count": 1, "time": 52837.18 },
+                { "name": "g2_3", "parent_A": "TCS", "parent_B": "g1_5", "correction_count": 1, "time": 56802.59 },
+                { "name": "g4_1", "parent_A": "g3_2", "parent_B": "g2_3", "correction_count": 1, "time": 58510.1 },
+                { "name": "g3_5", "parent_A": "TPK", "parent_B": "g2_2", "correction_count": 1, "time": 58943.06 },
+                { "name": "g4_2", "parent_A": "g2_3", "parent_B": "g3_5", "correction_count": 1, "time": 63305.07 },
+                { "name": "g2_2", "parent_A": "TPK", "parent_B": "g1_5", "correction_count": 1, "time": 63889.73 },
+                { "name": "g3_1", "parent_A": "g2_2", "parent_B": "g2_3", "correction_count": 1, "time": 110625.51 },
+                { "name": "g4_5", "parent_A": "g3_1", "parent_B": "g3_2", "correction_count": 1, "time": 135094.24 },
+                { "name": "g4_3", "parent_A": "g3_5", "parent_B": "g2_2", "correction_count": 0, "time": 276211.64 },
+                { "name": "g4_4", "parent_A": "g2_2", "parent_B": "g3_1", "correction_count": 0, "time": 420425.79 }
+            ]
+        },
+        {
+            "generation": 5,
+            "individuals": [
+                { "name": "g3_2", "parent_A": "g2_3", "parent_B": "SEM", "correction_count": 1, "time": 52837.18 },
+                { "name": "g2_3", "parent_A": "TCS", "parent_B": "g1_5", "correction_count": 1, "time": 56802.59 },
+                { "name": "g4_1", "parent_A": "g3_2", "parent_B": "g2_3", "correction_count": 1, "time": 58510.1 },
+                { "name": "g3_5", "parent_A": "TPK", "parent_B": "g2_2", "correction_count": 1, "time": 58943.06 },
+                { "name": "g5_1", "parent_A": "g3_2", "parent_B": "g4_1", "correction_count": 1, "time": 59821.05 },
+                { "name": "g5_5", "parent_A": "g3_5", "parent_B": "g4_2", "correction_count": 0, "time": 60756.29 },
+                { "name": "g5_2", "parent_A": "g3_2", "parent_B": "g3_5", "correction_count": 0, "time": 60948.51 },
+                { "name": "g5_3", "parent_A": "g4_1", "parent_B": "g3_5", "correction_count": 0, "time": 63182.48 },
+                { "name": "g4_2", "parent_A": "g2_3", "parent_B": "g3_5", "correction_count": 1, "time": 63305.07 },
+                { "name": "g5_4", "parent_A": "g4_1", "parent_B": "g4_2", "correction_count": 0, "time": 64844.56 }
+            ]
+        },
+        {
+            "generation": 6,
+            "individuals": [
+                { "name": "g3_2", "parent_A": "g2_3", "parent_B": "SEM", "correction_count": 1, "time": 52837.18 },
+                { "name": "g6_1", "parent_A": "g3_2", "parent_B": "g5_1", "correction_count": 0, "time": 55752.25 },
+                { "name": "g2_3", "parent_A": "TCS", "parent_B": "g1_5", "correction_count": 1, "time": 56802.59 },
+                { "name": "g4_1", "parent_A": "g3_2", "parent_B": "g2_3", "correction_count": 1, "time": 58510.1 },
+                { "name": "g3_5", "parent_A": "TPK", "parent_B": "g2_2", "correction_count": 1, "time": 58943.06 },
+                { "name": "g6_4", "parent_A": "g4_1", "parent_B": "g5_1", "correction_count": 0, "time": 59384.8 },
+                { "name": "g6_2", "parent_A": "g2_3", "parent_B": "g4_1", "correction_count": 0, "time": 59500.1 },
+                { "name": "g6_5", "parent_A": "g3_5", "parent_B": "g5_1", "correction_count": 0, "time": 59616.41 },
+                { "name": "g5_1", "parent_A": "g3_2", "parent_B": "g4_1", "correction_count": 1, "time": 59821.05 },
+                { "name": "g6_3", "parent_A": "g2_3", "parent_B": "g5_1", "correction_count": 0, "time": 91862.51 }
+            ]
+        },
+        {
+            "generation": 7,
+            "individuals": [
+                { "name": "g3_2", "parent_A": "g2_3", "parent_B": "SEM", "correction_count": 1, "time": 52837.18 },
+                { "name": "g7_1", "parent_A": "g3_2", "parent_B": "g6_1", "correction_count": 0, "time": 54808.28 },
+                { "name": "g6_1", "parent_A": "g3_2", "parent_B": "g5_1", "correction_count": 0, "time": 55752.25 },
+                { "name": "g2_3", "parent_A": "TCS", "parent_B": "g1_5", "correction_count": 1, "time": 56802.59 },
+                { "name": "g7_5", "parent_A": "g2_3", "parent_B": "g4_1", "correction_count": 0, "time": 57098.94 },
+                { "name": "g4_1", "parent_A": "g3_2", "parent_B": "g2_3", "correction_count": 1, "time": 58510.1 },
+                { "name": "g3_5", "parent_A": "TPK", "parent_B": "g2_2", "correction_count": 1, "time": 58943.06 },
+                { "name": "g7_4", "parent_A": "g6_1", "parent_B": "g3_5", "correction_count": 1, "time": 75060.36 },
+                { "name": "g7_2", "parent_A": "g6_1", "parent_B": "g2_3", "correction_count": 0, "time": 84648.68 },
+                { "name": "g7_3", "parent_A": "g6_1", "parent_B": "g4_1", "correction_count": 1, "time": 106737.44 }
+            ]
+        },
+        {
+            "generation": 8,
+            "individuals": [
+                { "name": "g8_3", "parent_A": "g7_1", "parent_B": "g6_1", "correction_count": 0, "time": 24544.14 },
+                { "name": "g8_4", "parent_A": "g7_1", "parent_B": "g2_3", "correction_count": 0, "time": 51692.53 },
+                { "name": "g8_2", "parent_A": "g3_2", "parent_B": "g7_5", "correction_count": 0, "time": 51824.1 },
+                { "name": "g3_2", "parent_A": "g2_3", "parent_B": "SEM", "correction_count": 1, "time": 52837.18 },
+                { "name": "g7_1", "parent_A": "g3_2", "parent_B": "g6_1", "correction_count": 0, "time": 54808.28 },
+                { "name": "g8_1", "parent_A": "g3_2", "parent_B": "g7_1", "correction_count": 0, "time": 55689.63 },
+                { "name": "g6_1", "parent_A": "g3_2", "parent_B": "g5_1", "correction_count": 0, "time": 55752.25 },
+                { "name": "g8_5", "parent_A": "g6_1", "parent_B": "g7_5", "correction_count": 0, "time": 56632.67 },
+                { "name": "g2_3", "parent_A": "TCS", "parent_B": "g1_5", "correction_count": 1, "time": 56802.59 },
+                { "name": "g7_5", "parent_A": "g2_3", "parent_B": "g4_1", "correction_count": 0, "time": 57098.94 }
+            ]
+        },
+        {
+            "generation": 9,
+            "individuals": [
+                { "name": "g8_3", "parent_A": "g7_1", "parent_B": "g6_1", "correction_count": 0, "time": 24544.14 },
+                { "name": "g8_4", "parent_A": "g7_1", "parent_B": "g2_3", "correction_count": 0, "time": 51692.53 },
+                { "name": "g8_2", "parent_A": "g3_2", "parent_B": "g7_5", "correction_count": 0, "time": 51824.1 },
+                { "name": "g9_3", "parent_A": "g8_4", "parent_B": "g8_2", "correction_count": 1, "time": 51912.7 },
+                { "name": "g9_5", "parent_A": "g8_2", "parent_B": "g7_1", "correction_count": 0, "time": 52161.71 },
+                { "name": "g9_2", "parent_A": "g8_3", "parent_B": "g7_1", "correction_count": 0, "time": 52640.46 },
+                { "name": "g3_2", "parent_A": "g2_3", "parent_B": "SEM", "correction_count": 1, "time": 52837.18 },
+                { "name": "g9_4", "parent_A": "g8_4", "parent_B": "g3_2", "correction_count": 1, "time": 54808.28 },
+                { "name": "g7_1", "parent_A": "g3_2", "parent_B": "g6_1", "correction_count": 0, "time": 54808.28 },
+                { "name": "g9_1", "parent_A": "g8_3", "parent_B": "g3_2", "correction_count": 0, "time": 54874.9 }
+            ]
+        },
+        {
+            "generation": 10,
+            "individuals": [
+                { "name": "g8_3", "parent_A": "g7_1", "parent_B": "g6_1", "correction_count": 0, "time": 24544.14 },
+                { "name": "g10_5", "parent_A": "g9_5", "parent_B": "g8_3", "correction_count": 0, "time": 24829.97 },
+                { "name": "g10_2", "parent_A": "g8_4", "parent_B": "g8_2", "correction_count": 0, "time": 51692.3 },
+                { "name": "g8_4", "parent_A": "g7_1", "parent_B": "g2_3", "correction_count": 0, "time": 51692.53 },
+                { "name": "g8_2", "parent_A": "g3_2", "parent_B": "g7_5", "correction_count": 0, "time": 51824.1 },
+                { "name": "g9_3", "parent_A": "g8_4", "parent_B": "g8_2", "correction_count": 1, "time": 51912.7 },
+                { "name": "g9_5", "parent_A": "g8_2", "parent_B": "g7_1", "correction_count": 0, "time": 52161.71 },
+                { "name": "g10_4", "parent_A": "g9_3", "parent_B": "g9_5", "correction_count": 0, "time": 52220.0 },
+                { "name": "g10_3", "parent_A": "g8_2", "parent_B": "g9_3", "correction_count": 0, "time": 52308.6 },
+                { "name": "g10_1", "parent_A": "g8_3", "parent_B": "g8_4", "correction_count": 0, "time": 59450.88 }
+            ]
+        }
+    ]
+  }
+}
+

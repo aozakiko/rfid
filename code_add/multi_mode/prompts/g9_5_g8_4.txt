@@ -1,0 +1,418 @@
+提示词：任务: 作为一名资深的RFID协议设计与优化专家，您的任务是基于给定的两个父代RFID协议（不要引入任何其他协议），创造一个全新的、功能完整的子代协议。该协议的核心目标是解决一个更具挑战性的 多众数查询问题。在此场景下，100000个标签（其价格属性值范围为1-1000）中存在多个频率相近的“热门”价格（众数），您的协议需要至少准确找出一个。
+
+核心设计准则 (必须严格遵守):
+1、强制交叉 (Mandatory Crossover): 新协议的设计必须体现出对两个父代协议核心思想的深度融合。您必须从父代A和父代B的设计哲学中汲取灵感，并有机地结合它们的优势，形成一个逻辑自洽的全新策略。
+2、强制突变 (Mandatory Mutation): 在融合父代思想的基础上，新协议必须引入至少一项在两个父代中都未曾出现过的、全新的优化机制或逻辑。
+3、准确率优先 (Accuracy First): 协议的逻辑正确性是最高优先级。最终方案必须是健壮的，能够稳定且准确地找出价格属性的众数。
+4、信息隔离原则 (Information Isolation Principle):
+    读写器 (Reader): 读写器默认已知环境中所有标签的ID列表作为全局背景信息。在协议执行期间，读写器可以向标签广播任何参数。其所有决策和分析，必须严格且仅依据以下信息：1) 它自己广播的历史参数；2) 从天线接收到的匿名聚合信号（即frame帧，一系列比特流）；3) 已知的全局标签ID列表。严禁在代码逻辑中直接或间接访问任何单个标签的私有属性（如 tag.price）。
+    标签 (Tag): 标签的响应行为严格且仅依据以下信息：1) 自身的私有数据（如ID和价格）；2) 当前从读写器接收到的广播指令。严禁标签获取其他任何标签的信息或全局通信结果。
+5、执行时间计算：你需要在代码中计算你设计协议的执行时间，其计算公式为:总执行时间公式: TotalTime = T_reader + T_tag + T_overhead
+T_reader (ms) = total_bits_sent_by_reader × 0.025
+T_tag (ms) = total_slots × bits_per_slot × 0.4
+T_overhead (ms) = (total_frames - 1) × 30
+
+执行步骤：
+第一步：交叉 (Crossover) - 融合父代基因
+请分析父代A和父代B的python代码，从他们的设计中获取灵感，生成一个结构上完整且逻辑自洽的初始子代协议。
+第二步：突变 (Mutation) - 引入创新优化
+接下来，请审视您在第一步中生成的初始子代协议，并对其进行一次有意义的“突变”。这个突变应该是一项父代A和父代B中都未曾出现过的、全新的优化或改动。
+你可以考虑但不限于以下突变方向：
+（1）引入一种全新的启发式策略来动态调整参数（如 frame_size）。
+（2） 简化或替换协议中的某个核心数据结构以提升效率。
+（3）增加一个在父代中没有的、用于提前终止无效查询的逻辑判断。
+请将这个突变无缝地集成到您的设计中，形成最终的子代协议。
+
+输出要求:
+1、请生成一个功能完整、符合IProtocol接口标准的Python类（只包含协议类即可，其他直接导入）。
+2、输出只包含经过交叉与突变后最终形成的、可直接运行的解决方案代码。
+3、请在代码中用注释明确标注出：
+    # --- 交叉部分：融合父代A的...思想与父代B的...思想 ---
+    # --- 突变部分：引入...全新机制 ---
+
+协议A：
+import math
+from typing import List, Tuple, Dict, Set
+from base import Tag, IProtocol, generate_random_seed
+from hash import simple_hash
+
+class g9_5(IProtocol):
+    """
+    子代协议: 自适应碰撞强度协议 (Adaptive Collision Intensity Protocol, ACIP)
+
+    本协议是一个全新的、为解决多众数查询问题而设计的子代协议。
+    它严格遵循交叉与突变的设计原则，旨在实现高准确率与高效率的平衡。
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        total_frames = 0
+        total_bits_sent_by_reader = 0
+        total_tag_reply_bits = 0
+
+        # --- 协议超参数 ---
+        # 阶段一：过滤相关
+        initial_filter_frame_size = 256
+        num_hash_functions = 2
+        candidate_threshold = 45      # 当候选者数量小于此值时，停止过滤
+        max_filter_rounds = 6         # 最大过滤轮次，防止无限循环
+        
+        # 继承自父代的自适应帧长调整参数
+        high_density_threshold = 0.85 # 帧密度过高阈值 (用于扩大帧)
+        low_density_threshold = 0.25  # 帧密度过低阈值 (用于缩小帧)
+        min_frame_size = 64           # 过滤帧的最小尺寸
+
+        # 继承自父代的停滞感知参数
+        stagnation_threshold = 0.05
+        min_rounds_before_stagnation_check = 2
+        
+        # 阶段二：验证相关
+        verification_frame_size = 128
+
+        # ==================================================================
+        #  阶段一: 基于碰撞强度的自适应迭代过滤
+        # ==================================================================
+        
+        # --- 交叉部分：融合父代A的自适应与停滞检测思想与父代B的多哈希迭代过滤思想 ---
+        # 本协议采纳了两个父代共有的“过滤-验证”两阶段架构。
+        # 在核心的过滤阶段，我们融合了父代B的多哈希函数迭代过滤框架，通过多轮通信逐步筛选候选价格。
+        # 同时，我们深度集成了父代A的精髓：1) 基于实时帧密度动态调整下一轮通信的帧长，以适应标签分布的变化；
+        # 2) 引入“停滞感知”机制，当候选集缩减效率过低时提前终止过滤，避免不必要的通信开销。
+        # 这种融合使得过滤阶段既有鲁棒的筛选能力，又具备智能的动态调节和提前终止能力。
+
+        candidate_prices: Set[int] = set(range(price_min, price_max + 1))
+        filter_rounds_done = 0
+        current_filter_frame_size = initial_filter_frame_size
+
+        while len(candidate_prices) > candidate_threshold and filter_rounds_done < max_filter_rounds:
+            prev_candidate_count = len(candidate_prices)
+
+            # 广播当前轮次的帧长和哈希种子
+            total_frames += num_hash_functions
+            filter_seeds = [generate_random_seed() for _ in range(num_hash_functions)]
+            bits_sent_this_round = current_filter_frame_size.bit_length()
+            for seed in filter_seeds:
+                bits_sent_this_round += seed.bit_length() # 假设种子长度可变
+            total_bits_sent_by_reader += bits_sent_this_round
+
+            # --- [物理层模拟] ---
+            # 读写器准备接收帧，每个slot记录响应的标签数量
+            filter_frames_states = [[0] * current_filter_frame_size for _ in range(num_hash_functions)]
+            for t in tags:
+                if t.price in candidate_prices:
+                    for i in range(num_hash_functions):
+                        slot_id = simple_hash(t.price, filter_seeds[i]) % current_filter_frame_size
+                        filter_frames_states[i][slot_id] += 1
+            
+            # 此阶段标签仅需回复1bit表示存在性，通信成本与帧长相关
+            total_tag_reply_bits += current_filter_frame_size * num_hash_functions * 1
+            # --- [物理层模拟结束] ---
+
+            # --- 读写器分析聚合信号，生成新的候选集 ---
+            new_candidates = set()
+            for p in candidate_prices:
+                is_present_in_all_frames = True
+                collision_count = 0
+                
+                for i in range(num_hash_functions):
+                    slot_id = simple_hash(p, filter_seeds[i]) % current_filter_frame_size
+                    slot_state = filter_frames_states[i][slot_id]
+                    
+                    if slot_state == 0:
+                        is_present_in_all_frames = False
+                        break 
+                    if slot_state > 1:
+                        collision_count += 1
+                
+                # --- 突变部分：引入“碰撞强度”作为核心过滤准则的全新机制 ---
+                # 这是父代A和B都未曾具备的全新优化。在传统的布隆过滤器逻辑（必须在所有哈希函数
+                # 对应的时隙中都存在）之上，我们增加了一个更强的约束：一个价格要想在本轮中幸存，
+                # 它不仅要处处存在，还必须“至少引发一次碰撞”。
+                # 其核心逻辑是：众数（高频价格）极大概率会在至少一个哈希映射中与其他标签发生碰撞，
+                # 而那些频率较低的“冷门”价格则更有可能在所有哈希映射中都幸运地只占据一个“单例”时隙。
+                # 通过主动过滤掉这些未引发任何碰撞的“幸运儿”，协议可以更快速、更激进地剔除噪声，
+                # 从而聚焦于真正具有“众数”潜力的价格。
+                if is_present_in_all_frames and collision_count > 0:
+                    new_candidates.add(p)
+
+            # 如果没有候选者幸存，为防止候选集为空，提前终止
+            if not new_candidates:
+                break
+            
+            candidate_prices = new_candidates
+            filter_rounds_done += 1
+
+            # (交叉) 继承自父代的帧碰撞率自适应调整逻辑
+            total_slots_in_round = num_hash_functions * current_filter_frame_size
+            total_non_empty_slots = sum(sum(1 for count in frame if count > 0) for frame in filter_frames_states)
+            density = total_non_empty_slots / total_slots_in_round if total_slots_in_round > 0 else 0
+
+            if density > high_density_threshold:
+                current_filter_frame_size *= 2 # 碰撞太严重，扩大帧
+            elif density < low_density_threshold:
+                new_size = current_filter_frame_size // 2
+                current_filter_frame_size = max(min_frame_size, new_size) # 太稀疏，缩小帧
+            
+            # (交叉) 继承自父代的停滞感知提前终止逻辑
+            if filter_rounds_done >= min_rounds_before_stagnation_check:
+                reduction_ratio = (prev_candidate_count - len(candidate_prices)) / prev_candidate_count if prev_candidate_count > 0 else 0
+                if reduction_ratio < stagnation_threshold:
+                    break # 过滤效果停滞，提前跳出循环
+
+        # ==================================================================
+        #  阶段二: 高效并行精确验证
+        # ==================================================================
+
+        # --- 交叉部分：融合父代A与B共有的高效并行验证思想 ---
+        # 经过第一阶段高效的自适应过滤后，候选者数量已被大幅削减。此时，本协议
+        # 切换到两个父代共同采用的核心优势策略：并行位图验证。读写器将所有剩余的
+        # 候选价格编码为位掩码的不同位，并通过一次通信让所有相关标签在同一个帧内
+        # 并行地报告自己的存在。读写器仅需分析这一个聚合帧，即可同时解码出所有
+        # 候选价格的准确计数值，以极高的效率完成最终的精确计数。
+
+        final_scores = {}
+        num_final_candidates = len(candidate_prices)
+
+        if candidate_prices:
+            total_frames += 1
+            candidate_list = sorted(list(candidate_prices))
+            price_to_bit_pos_map = {price: i for i, price in enumerate(candidate_list)}
+            
+            seed_verify = generate_random_seed()
+            total_bits_sent_by_reader += (verification_frame_size.bit_length() +
+                                          seed_verify.bit_length() +
+                                          sum(p.bit_length() for p in candidate_list))
+
+            # --- [物理层模拟] ---
+            # 标签回复的比特数等于最终候选者的数量
+            verification_frame_slots = [0] * verification_frame_size
+            for t in tags:
+                if t.price in price_to_bit_pos_map:
+                    slot_id = simple_hash(t.id, seed_verify) % verification_frame_size
+                    bit_pos = price_to_bit_pos_map[t.price]
+                    verification_frame_slots[slot_id] |= (1 << bit_pos)
+            
+            total_tag_reply_bits += verification_frame_size * num_final_candidates
+            # --- [物理层模拟结束] ---
+            
+            # 读写器解码聚合帧，并行计算所有候选者的得分
+            for price, bit_pos in price_to_bit_pos_map.items():
+                score = sum(((slot_data >> bit_pos) & 1) for slot_data in verification_frame_slots)
+                if score > 0:
+                    final_scores[price] = score
+
+        # ==================================================================
+        #  最终处理与时间计算
+        # ==================================================================
+        T_reader = total_bits_sent_by_reader * 0.025
+        # 注意: 协议A和B中对 total_tag_reply_bits 的计算方式不同，这里统一采用 bits_per_slot * total_slots
+        T_tag = total_tag_reply_bits * 0.4 
+        T_overhead = (total_frames - 1) * 30 if total_frames > 1 else 0
+        total_time_ms = T_reader + T_tag + T_overhead
+
+        verification_data = {
+            "filter_rounds_done": filter_rounds_done,
+            "final_filter_frame_size": current_filter_frame_size,
+            "num_final_candidates": num_final_candidates,
+            "final_scores": final_scores
+        }
+
+        if not final_scores:
+            return [], 0, total_time_ms, verification_data
+
+        max_score = max(final_scores.values())
+        modes = sorted([
+            price for price, score in final_scores.items()
+            if score == max_score
+        ])
+
+        return modes, max_score, total_time_ms, verification_data
+
+
+
+协议B：
+import math
+from typing import List, Tuple, Dict, Set
+from base import Tag, IProtocol, generate_random_seed
+from hash import simple_hash
+
+class g8_4(IProtocol):
+    """
+    子代协议: 具备早停机制的自适应过滤与并行验证协议
+    (Adaptive Filtering with Early Termination and Parallel Verification Protocol)
+
+    本协议是一个全新的子代协议，旨在高效解决复杂的多众数查询问题。
+    它深度融合了父代协议A和B的优点，并引入了基于“收益递减”的
+    早停机制作为突变，以在保证高准确率的同时，进一步优化通信效率。
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        total_frames = 0
+        total_bits_sent_by_reader = 0
+        total_tag_response_bits = 0 # 因每个阶段的bits_per_slot可变，直接统计总比特数
+
+        # --- 协议超参数 ---
+        # 阶段一: 过滤相关
+        initial_filter_frame_size = 256
+        num_hash_functions = 2
+        candidate_threshold = 30      # 当候选者数量小于此值时，停止过滤
+        max_filter_rounds = 6         # 最大过滤轮次
+        high_density_threshold = 0.75 # 帧密度过高阈值 (用于扩大帧)
+        low_density_threshold = 0.25  # 帧密度过低阈值 (用于缩小帧)
+        min_frame_size = 64           # 过滤帧的最小尺寸
+
+        # --- 突变部分引入的超参数 ---
+        diminishing_return_threshold = 0.95 # 若候选者数量与上一轮相比高于此比例，则早停
+
+        # 阶段二: 验证相关
+        verification_frame_size = 128
+
+        # ==================================================================
+        #  阶段一: 自适应迭代过滤
+        # --- 交叉部分：融合父代A的严格多哈希过滤思想与父代B的自适应迭代框架 ---
+        # 本阶段采纳了父代B的迭代式过滤框架，通过多轮通信逐步筛选候选价格。
+        # 同时，每一轮的筛选逻辑借鉴了父代A的布隆过滤器思想：一个价格必须在
+        # 所有哈希函数映射的时隙中都非空才能存活，这提供了更强的过滤能力。
+        # 此外，从父代B继承的自适应帧长调整机制，使得协议能动态应对标签密度
+        # 的变化，有效平衡了冲突与信道利用率。
+        # ==================================================================
+        candidate_prices: Set[int] = set(range(price_min, price_max + 1))
+        filter_rounds_done = 0
+        current_filter_frame_size = initial_filter_frame_size
+        
+        termination_reason = "Max rounds reached" # 默认的终止原因
+
+        while len(candidate_prices) > candidate_threshold and filter_rounds_done < max_filter_rounds:
+            
+            total_frames += num_hash_functions
+            filter_seeds = [generate_random_seed() for _ in range(num_hash_functions)]
+            # 读写器广播帧长和哈希种子 (假设种子是32位)
+            total_bits_sent_by_reader += num_hash_functions * (current_filter_frame_size.bit_length() + 32)
+
+            # --- [物理层模拟] ---
+            # 读写器准备接收帧
+            filter_frames_states = [[0] * current_filter_frame_size for _ in range(num_hash_functions)]
+            for t in tags:
+                if t.price in candidate_prices:
+                    for i in range(num_hash_functions):
+                        slot_id = simple_hash(t.price, filter_seeds[i]) % current_filter_frame_size
+                        filter_frames_states[i][slot_id] = 1 # 仅标记为非空
+            
+            # 在过滤阶段，标签只回复1比特表示存在性
+            total_tag_response_bits += current_filter_frame_size * num_hash_functions * 1
+            # --- [物理层模拟结束] ---
+
+            # 读写器分析聚合信号
+            new_candidates = set()
+            for p in candidate_prices:
+                is_still_candidate = True
+                # 应用父代A的严格过滤逻辑
+                for i in range(num_hash_functions):
+                    slot_id = simple_hash(p, filter_seeds[i]) % current_filter_frame_size
+                    if filter_frames_states[i][slot_id] == 0:
+                        is_still_candidate = False
+                        break
+                
+                if is_still_candidate:
+                    new_candidates.add(p)
+
+            # --- 突变部分：引入基于“收益递减”的早停机制 ---
+            # 与父代协议固定的终止条件不同，本协议引入了一个全新的动态判断逻辑。
+            # 在每轮过滤后，读写器会计算候选者集合的“缩减率”。如果发现连续的
+            # 过滤操作带来的收益（即筛除无效价格的效率）已经变得很低，协议将
+            # 提前终止过滤阶段，避免在低效的通信上浪费时间，直接进入验证阶段。
+            # 这种机制使得协议对不同数据分布的适应性更强。
+            if len(candidate_prices) > 0 and (len(new_candidates) / len(candidate_prices)) > diminishing_return_threshold:
+                candidate_prices = new_candidates # 更新候选者，然后退出
+                filter_rounds_done += 1
+                termination_reason = f"Diminishing returns (reduction rate > {diminishing_return_threshold})"
+                break
+            
+            # 如果没有候选者幸存，则提前终止
+            if not new_candidates:
+                candidate_prices = set()
+                termination_reason = "No candidates survived"
+                break
+            
+            candidate_prices = new_candidates
+            filter_rounds_done += 1
+
+            # 检查是否因为候选者数量达标而终止
+            if len(candidate_prices) <= candidate_threshold:
+                termination_reason = f"Candidate count below threshold ({candidate_threshold})"
+                break
+
+            # --- 交叉部分：自适应调整帧长 (源自父代B) ---
+            total_slots_in_round = num_hash_functions * current_filter_frame_size
+            total_non_empty_slots = sum(sum(1 for slot_state in frame if slot_state > 0) for frame in filter_frames_states)
+            density = total_non_empty_slots / total_slots_in_round if total_slots_in_round > 0 else 0
+
+            if density > high_density_threshold:
+                current_filter_frame_size *= 2 # 碰撞太严重，扩大帧
+            elif density < low_density_threshold:
+                new_size = current_filter_frame_size // 2
+                current_filter_frame_size = max(min_frame_size, new_size) # 太稀疏，缩小帧
+        
+        final_candidate_list = sorted(list(candidate_prices))
+
+        # ==================================================================
+        #  阶段二: 并行位图精确验证
+        # --- 交叉部分：该验证方法的核心逻辑继承自父代B的并行位图思想 ---
+        # 经过第一阶段的大幅筛选后，本阶段直接采用父代B中最高效的并行位图
+        # 验证方案。所有候选者被编码到一个位向量中，读写器通过一次通信，
+        # 就能并行地、精确地统计出所有候选价格的数量。这避免了父代A中
+        # 为每个候选者单独进行验证的巨大开销，是处理多个潜在众数的理想选择。
+        # ==================================================================
+        final_counts: Dict[int, int] = {}
+        if final_candidate_list:
+            total_frames += 1
+            price_to_bit_pos_map = {price: i for i, price in enumerate(final_candidate_list)}
+            bits_per_slot_verify = len(final_candidate_list)
+
+            seed_verify = generate_random_seed()
+            # 读写器广播验证参数：帧长、种子以及最终候选价格列表
+            total_bits_sent_by_reader += (verification_frame_size.bit_length() +
+                                          32 + # 假设种子是32位
+                                          sum(p.bit_length() for p in final_candidate_list))
+
+            # --- [物理层模拟] ---
+            verification_frame_slots = [0] * verification_frame_size
+            for t in tags:
+                if t.price in price_to_bit_pos_map:
+                    slot_id = simple_hash(t.id, seed_verify) % verification_frame_size
+                    bit_pos = price_to_bit_pos_map[t.price]
+                    verification_frame_slots[slot_id] |= (1 << bit_pos)
+
+            total_tag_response_bits += verification_frame_size * bits_per_slot_verify
+            # --- [物理层模拟结束] ---
+
+            # 读写器分析聚合位图，计算每个价格的精确计数值
+            for price, bit_pos in price_to_bit_pos_map.items():
+                mask = 1 << bit_pos
+                count = sum(1 for slot_data in verification_frame_slots if (slot_data & mask) != 0)
+                if count > 0:
+                    final_counts[price] = count
+
+        # ==================================================================
+        #  最终处理与时间计算
+        # ==================================================================
+        T_reader = total_bits_sent_by_reader * 0.025
+        T_tag = total_tag_response_bits * 0.4 
+        T_overhead = (total_frames - 1) * 30 if total_frames > 0 else 0
+        total_time_ms = T_reader + T_tag + T_overhead
+
+        debug_data = {
+            "filter_rounds_done": filter_rounds_done,
+            "termination_reason": termination_reason,
+            "candidates_after_filter": len(final_candidate_list),
+            "final_counts": final_counts,
+        }
+
+        if not final_counts:
+            return [], 0, total_time_ms, debug_data
+
+        max_score = max(final_counts.values())
+        modes = sorted([p for p, s in final_counts.items() if s == max_score])
+
+        return modes, max_score, total_time_ms, debug_data
+
+

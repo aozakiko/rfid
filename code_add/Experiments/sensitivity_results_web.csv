@@ -1,0 +1,4 @@
+﻿factor_name,factor_value,protocol_name,avg_time_s
+scale,1000,ModeQueryEE,73.37319999999978
+scale,10000,ModeQueryEE,1922.932600000039
+scale,100000,ModeQueryEE,25637.6146000031

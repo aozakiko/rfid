@@ -1,0 +1,3 @@
+﻿gateway_id,windows,avg_protocol_time_ms,avg_frame_size,hit_rate
+edge-1,1,16569.83,2048.0,1.0
+edge-2,1,16569.92,2048.0,1.0

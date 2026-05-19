@@ -1,0 +1,12 @@
+{
+  "scene": "multi_mode",
+  "protocol": "g2_2",
+  "protocol_source": "multi_mode/generation2",
+  "device_count": 2,
+  "gateway_count": 2,
+  "batch_count": 1,
+  "num_tags_per_batch": 30,
+  "price_min": 1,
+  "price_max": 80,
+  "stream_window_size": 3
+}

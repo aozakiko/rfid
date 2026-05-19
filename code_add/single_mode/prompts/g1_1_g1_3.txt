@@ -1,0 +1,437 @@
+提示词：任务: 作为一名资深的RFID协议设计与优化专家，您的任务是基于给定的两个父代RFID协议（不要引入任何其他协议），创造一个全新的、功能完整的子代协议。任务: 作为一名资深的RFID协议设计与优化专家，您的任务是基于给定的两个父代RFID协议（不要引入任何其他协议），创造一个全新的、功能完整的子代协议。该协议的核心目标是在保证较高的正确率的前提下，解决在20,000个标签中（其价格属性值范围为1-1000）的单一众数查询问题。
+
+核心设计准则 (必须严格遵守):
+1、强制交叉 (Mandatory Crossover): 新协议的设计必须体现出对两个父代协议核心思想的深度融合。您必须从父代A和父代B的设计哲学中汲取灵感，并有机地结合它们的优势，形成一个逻辑自洽的全新策略。
+2、强制突变 (Mandatory Mutation): 在融合父代思想的基础上，新协议必须引入至少一项在两个父代中都未曾出现过的、全新的优化机制或逻辑。
+3、准确率优先 (Accuracy First): 协议的逻辑正确性是最高优先级。最终方案必须是健壮的，能够稳定且准确地找出价格属性的众数。
+4、信息隔离原则 (Information Isolation Principle):
+    读写器 (Reader): 读写器默认已知环境中所有标签的ID列表作为全局背景信息。在协议执行期间，读写器可以向标签广播任何参数。其所有决策和分析，必须严格且仅依据以下信息：1) 它自己广播的历史参数；2) 从天线接收到的匿名聚合信号（即frame帧，一系列比特流）；3) 已知的全局标签ID列表。严禁在代码逻辑中直接或间接访问任何单个标签的私有属性（如 tag.price）。
+    标签 (Tag): 标签的响应行为严格且仅依据以下信息：1) 自身的私有数据（如ID和价格）；2) 当前从读写器接收到的广播指令。严禁标签获取其他任何标签的信息或全局通信结果。
+5、执行时间计算：你需要在代码中计算你设计协议的执行时间，其计算公式为:总执行时间公式: TotalTime = T_reader + T_tag + T_overhead
+T_reader (ms) = total_bits_sent_by_reader × 0.025
+T_tag (ms) = total_slots × bits_per_slot × 0.4
+T_overhead (ms) = (total_frames - 1) × 30
+
+执行步骤：
+第一步：交叉 (Crossover) - 融合父代基因
+请分析父代A和父代B的python代码，从他们的设计中获取灵感，生成一个结构上完整且逻辑自洽的初始子代协议。
+第二步：突变 (Mutation) - 引入创新优化
+接下来，请审视您在第一步中生成的初始子代协议，并对其进行一次有意义的“突变”。这个突变应该是一项父代A和父代B中都未曾出现过的、全新的优化或改动。
+你可以考虑但不限于以下突变方向：
+（1）引入一种全新的启发式策略来动态调整参数（如 frame_size）。
+（2） 简化或替换协议中的某个核心数据结构以提升效率。
+（3）增加一个在父代中没有的、用于提前终止无效查询的逻辑判断。
+请将这个突变无缝地集成到您的设计中，形成最终的子代协议。
+
+输出要求:
+1、请生成一个功能完整、符合IProtocol接口标准的Python类（只包含协议类即可，其他直接导入）。
+2、输出只包含经过交叉与突变后最终形成的、可直接运行的解决方案代码。
+3、请在代码中用注释明确标注出：
+    # --- 交叉部分：融合父代A的...思想与父代B的...思想 ---
+    # --- 突变部分：引入...全新机制 ---
+
+协议A：
+import math
+import random
+from typing import List, Tuple, Dict
+from collections import defaultdict
+from base import Tag, Frame, generate_random_seed, IProtocol
+from hash import simple_hash
+
+class g1_1(IProtocol):
+    """
+    子代协议: 基于自适应优化的分批启发式众数查询 (Batched Heuristic with Adaptive Refinement)
+
+    本协议融合了父代A(ModeQuerySEM)的分批并行思想和父代B(ModeQueryTCS)的非空时隙启发式指标，
+    并通过引入全新的自适应帧长调整机制进行突变优化，旨在高效且准确地找出单一众数。
+
+    协议流程:
+    1.  粗筛阶段 (Coarse Screening): 将价格空间划分为多个批次，使用中等大小的帧对每个批次进行
+        并行探测，并用非空时隙数作为初步评分，快速定位可能包含众数的高密度价格区间。
+    2.  自适应精炼阶段 (Adaptive Refinement): 识别出在粗筛阶段中出现严重冲突（即非空时隙数
+        接近帧长）的批次，并使用一个更大的帧长对这些批次进行重新探测，以获得更精确的评分，
+        从而选出唯一的候选批次。
+    3.  精确查找阶段 (Fine-grained Identification): 在唯一的候选批次内，对每个价格进行
+        逐一探测，找出得分最高的具体价格作为最终的众数。
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        total_frames = 0
+        total_bits_sent_by_reader = 0
+        total_tag_bits_sent = 0
+
+        # --- 协议超参数 ---
+        initial_batch_size = 100
+        coarse_frame_size = 256
+        refined_frame_size = 1024 # 用于高冲突批次的更大帧
+        fine_grained_frame_size = 128
+        contention_threshold_ratio = 0.95 # 冲突阈值
+
+        # --- 读写器初始化 ---
+        all_prices = list(range(price_min, price_max + 1))
+        price_batches = [all_prices[i:i + initial_batch_size] for i in range(0, len(all_prices), initial_batch_size)]
+        
+        batch_scores = {}
+        candidate_batch_index = -1
+
+        # --- 交叉部分：融合父代A的分批思想与父代B的非空时隙启发式思想 ---
+        # 阶段一：粗筛，快速定位高密度价格区间
+        for i, batch in enumerate(price_batches):
+            if not batch: continue
+            
+            # --- 读写器行为: 广播对价格批次 batch 的探测指令 ---
+            total_frames += 1
+            seed = generate_random_seed()
+            # 广播指令包含: 批次范围(min, max), 帧长, 种子
+            min_p, max_p = batch[0], batch[-1]
+            total_bits_sent_by_reader += min_p.bit_length() + max_p.bit_length() + coarse_frame_size.bit_length() + seed.bit_length()
+
+            # --- [物理层模拟] ---
+            slot_states = [0] * coarse_frame_size
+            for t in tags:
+                if min_p <= t.price <= max_p:
+                    slot_id = simple_hash(t.id, seed) % coarse_frame_size
+                    slot_states[slot_id] += 1
+            # --- [物理层模拟结束] ---
+
+            # 探测阶段每个时隙回复1bit
+            total_tag_bits_sent += coarse_frame_size * 1
+            
+            # --- 读写器分析: 使用父代B的启发式指标 ---
+            num_non_empty_slots = sum(1 for count in slot_states if count > 0)
+            batch_scores[i] = num_non_empty_slots
+
+        # --- 突变部分：引入高冲突批次的自适应帧长重估全新机制 ---
+        # 阶段二：对高冲突批次进行精炼
+        
+        # 识别高冲突批次
+        high_contention_batches_indices = []
+        contention_threshold = coarse_frame_size * contention_threshold_ratio
+        for i, score in batch_scores.items():
+            if score >= contention_threshold:
+                high_contention_batches_indices.append(i)
+
+        # 对高冲突批次使用更大帧长重新估算
+        for i in high_contention_batches_indices:
+            batch = price_batches[i]
+            # --- 读写器行为: 广播对高冲突批次的精炼探测指令 ---
+            total_frames += 1
+            seed = generate_random_seed()
+            min_p, max_p = batch[0], batch[-1]
+            total_bits_sent_by_reader += min_p.bit_length() + max_p.bit_length() + refined_frame_size.bit_length() + seed.bit_length()
+            
+            # --- [物理层模拟] ---
+            slot_states = [0] * refined_frame_size
+            for t in tags:
+                if min_p <= t.price <= max_p:
+                    slot_id = simple_hash(t.id, seed) % refined_frame_size
+                    slot_states[slot_id] += 1
+            # --- [物理层模拟结束] ---
+
+            # 探测阶段每个时隙回复1bit
+            total_tag_bits_sent += refined_frame_size * 1
+            
+            # 更新评分为更精确的值
+            refined_score = sum(1 for count in slot_states if count > 0)
+            batch_scores[i] = refined_score
+
+        # 选出最终的候选批次
+        if batch_scores:
+            # 通过对分数进行降序排序来找到得分最高的批次
+            sorted_batches = sorted(batch_scores.items(), key=lambda item: item[1], reverse=True)
+            if sorted_batches:
+                candidate_batch_index = sorted_batches[0][0]
+
+        # --- 交叉思想的延续：在筛选出的批次内进行精确查找 ---
+        # 阶段三：在候选批次内进行精确查找
+        price_to_score_map = {}
+        if candidate_batch_index != -1:
+            candidate_batch = price_batches[candidate_batch_index]
+            for p in candidate_batch:
+                total_frames += 1
+                seed = generate_random_seed()
+                total_bits_sent_by_reader += p.bit_length() + fine_grained_frame_size.bit_length() + seed.bit_length()
+
+                # --- [物理层模拟] ---
+                slot_states = [0] * fine_grained_frame_size
+                for t in tags:
+                    if t.price == p:
+                        slot_id = simple_hash(t.id, seed) % fine_grained_frame_size
+                        slot_states[slot_id] += 1
+                # --- [物理层模拟结束] ---
+                
+                # 探测阶段每个时隙回复1bit
+                total_tag_bits_sent += fine_grained_frame_size * 1
+                
+                num_non_empty_slots = sum(1 for count in slot_states if count > 0)
+                if num_non_empty_slots > 0:
+                    price_to_score_map[p] = num_non_empty_slots
+
+        # --- 结果汇总与时间计算 ---
+        T_reader = total_bits_sent_by_reader * 0.025
+        T_tag = total_tag_bits_sent * 0.4 
+        T_overhead = (total_frames - 1) * 30 if total_frames > 1 else 0
+        total_time_ms = T_reader + T_tag + T_overhead
+
+        verification_data = {
+            "batch_scores": batch_scores,
+            "candidate_batch_index": candidate_batch_index,
+            "final_scores": price_to_score_map
+        }
+
+        if not price_to_score_map:
+            return [], 0, total_time_ms, verification_data
+
+        max_score = max(price_to_score_map.values())
+        modes = sorted([
+            price for price, score in price_to_score_map.items() 
+            if score == max_score
+        ])
+        
+        return modes, max_score, total_time_ms, verification_data
+
+
+
+
+协议B：
+import math
+from typing import List, Tuple, Dict
+from base import Tag, Frame, generate_random_seed, IProtocol
+from hash import simple_hash
+
+class g1_3(IProtocol):
+    """
+    混合自适应众数查询协议 (Hybrid Adaptive Mode Query Protocol)
+
+    本协议是一个全新的子代协议，旨在高效且准确地解决大规模RFID系统中的众数查询问题。
+    它深度融合了两个父代协议的核心思想，并引入了全新的优化机制。
+
+    --- 交叉部分：融合父代A的精确计数思想与父代B的并行估算思想 ---
+    协议采用一种“先粗后精”的两阶段策略：
+    1. 估算阶段 (Estimation Phase): 借鉴父代B (ModeQuerySEM) 的并行处理和批次估算思想，
+       使用较小的帧长快速地对所有可能的价格进行一次全面的数量估算。这个阶段的目标是
+       快速筛选掉大量非众数的价格，并识别出一小部分具有高计数的“候选价格”。
+
+    2. 验证阶段 (Verification Phase): 针对上一阶段筛选出的少数候选价格，借鉴父代A
+       (ModeQueryEE) 的逐个精确计数思想，进行一对一的、绝对准确的数量统计。由于
+       候选集非常小，这个阶段虽然精确但开销可控。
+
+    通过这种方式，协议既利用了父代B的速度优势，又保证了父代A的准确性，实现了性能与
+    正确性的最佳平衡。
+
+    --- 突变部分：引入“冲突自适应重估”全新机制 ---
+    在估算阶段，如果某些价格的标签数量过多，会导致父代B的估算方法因严重的哈希冲突而
+    失效（返回无限大 'inf'），使得这些高计数的价格之间无法区分。为解决此问题，本协议
+    引入一个在父代中均未出现过的全新机制：冲突自适应重估 (Collision-Adaptive Re-estimation)。
+
+    当第一轮估算出现 'inf' 结果时，读写器不会直接采纳，而是会自动触发一个或多个后续的
+    “重估”子流程。在这些子流程中，读写器仅针对那些导致冲突的价格，使用一个显著增大的
+    帧长（frame_size）来重新进行估算。更大的帧长可以有效减少哈希冲突，从而为这些
+    高计数的候选者提供更精确、可比较的估算值，确保最有潜力的候选者能够被送入最终的
+    精确验证阶段。这一自适应调整策略是父代协议所不具备的。
+    """
+
+    def execute(self, tags: List[Tag], price_min: int, price_max: int) -> Tuple[List[int], int, float, Dict]:
+        # --- 协议超参数 ---
+        self.INITIAL_FRAME_SIZE = 128
+        self.RE_ESTIMATION_FRAME_SIZE = 1024
+        self.BATCH_SIZE = 100
+        self.CANDIDATE_THRESHOLD_RATIO = 0.7  # 筛选候选者的阈值比例
+
+        # --- 状态与时间追踪 ---
+        self.total_frames = 0
+        self.total_bits_sent_by_reader = 0
+        self.total_slots_used = 0
+        self.bits_per_slot = 0  # 将在估算中更新
+
+        # --- 阶段一: 估算筛选 (融合父代B思想 + 突变机制) ---
+        all_prices = list(range(price_min, price_max + 1))
+        estimated_counts = self._run_estimation_phase(tags, all_prices)
+
+        # --- 筛选候选价格 ---
+        if not estimated_counts:
+            return [], 0, self._calculate_total_time(), {}
+
+        max_estimated_count = 0
+        # 排除 inf 来找到实际的最大估算值
+        valid_estimates = [c for c in estimated_counts.values() if c != float('inf')]
+        if valid_estimates:
+            max_estimated_count = max(valid_estimates)
+
+        # 处理所有估算值为 inf 的情况
+        inf_prices = {p for p, c in estimated_counts.items() if c == float('inf')}
+
+        # 候选者包括所有inf价格，以及估算值足够接近最大值的价格
+        candidate_prices = inf_prices.union({
+            p for p, c in estimated_counts.items()
+            if c >= max_estimated_count * self.CANDIDATE_THRESHOLD_RATIO and c != float('inf')
+        })
+
+        if not candidate_prices:
+            # 如果筛选不出任何候选者，则选择估算值最高的一个作为候选
+            if estimated_counts:
+                top_price = max(estimated_counts, key=estimated_counts.get)
+                candidate_prices = {top_price}
+
+        # --- 阶段二: 精确验证 (融合父代A思想) ---
+        final_exact_counts = {}
+        for price in sorted(list(candidate_prices)):  # 排序以保证确定性
+            exact_count = self._get_exact_count_for_price(tags, price)
+            if exact_count > 0:
+                final_exact_counts[price] = exact_count
+
+        # --- 结果分析 ---
+        modes = []
+        max_count = 0
+        if final_exact_counts:
+            max_count = max(final_exact_counts.values())
+            modes = sorted([p for p, c in final_exact_counts.items() if c == max_count])
+
+        total_time_ms = self._calculate_total_time()
+
+        verification_data = {
+            "initial_frame_size": self.INITIAL_FRAME_SIZE,
+            "re_estimation_frame_size": self.RE_ESTIMATION_FRAME_SIZE,
+            "batch_size": self.BATCH_SIZE,
+            "estimated_counts": estimated_counts,
+            "candidate_prices": list(candidate_prices),
+            "final_exact_counts": final_exact_counts
+        }
+
+        return modes, max_count, total_time_ms, verification_data
+
+    def _run_estimation_phase(self, tags: List[Tag], prices_to_estimate: List[int]) -> Dict[int, float]:
+        """执行估算阶段，包含突变的自适应重估逻辑"""
+        estimated_counts = self._estimate_counts(tags, prices_to_estimate, self.INITIAL_FRAME_SIZE)
+
+        # --- 突变部分：检查冲突并启动自适应重估 ---
+        collided_prices = [p for p, c in estimated_counts.items() if c == float('inf')]
+
+        if collided_prices:
+            # 使用更大的帧长对冲突的价格进行重估
+            re_estimated_counts = self._estimate_counts(tags, collided_prices, self.RE_ESTIMATION_FRAME_SIZE)
+            # 更新原始估算结果
+            estimated_counts.update(re_estimated_counts)
+
+        return estimated_counts
+
+    def _estimate_counts(self, tags: List[Tag], prices: List[int], frame_size: int) -> Dict[int, float]:
+        """(源于父代B) 对一批价格进行数量估算的核心逻辑"""
+        price_batches = [prices[i:i + self.BATCH_SIZE] for i in range(0, len(prices), self.BATCH_SIZE)]
+        counts = {}
+
+        for batch in price_batches:
+            if not batch: continue
+
+            self.total_frames += 1
+            num_prices_in_batch = len(batch)
+            self.bits_per_slot = num_prices_in_batch
+            seed = generate_random_seed()
+            price_to_bit_pos_map = {price: i for i, price in enumerate(batch)}
+
+            self.total_bits_sent_by_reader += (seed.bit_length() + frame_size.bit_length() + num_prices_in_batch.bit_length())
+            self.total_slots_used += frame_size
+
+            # --- [物理层模拟] ---
+            physical_frame = Frame(num_slots=frame_size, bits_per_slot=num_prices_in_batch)
+            batch_price_set = set(batch)
+            for t in tags:
+                if t.price in batch_price_set:
+                    slot_id = simple_hash(t.id, seed) % frame_size
+                    bit_pos = price_to_bit_pos_map[t.price]
+                    reply_vector = 1 << bit_pos
+                    physical_frame.aggregate(slot_id, reply_vector)
+            # --- [物理层模拟结束] ---
+
+            # --- 读写器分析聚合帧 ---
+            for price, bit_pos in price_to_bit_pos_map.items():
+                logical_bit_vector = [((slot_data >> bit_pos) & 1) for slot_data in physical_frame.slots]
+                num_zeros = frame_size - sum(logical_bit_vector)
+
+                if num_zeros == frame_size:
+                    counts[price] = 0
+                elif num_zeros == 0:
+                    counts[price] = float('inf')  # 发生冲突
+                else:
+                    estimated_count = -frame_size * math.log(num_zeros / frame_size)
+                    counts[price] = estimated_count
+        return counts
+
+    def _get_exact_count_for_price(self, tags: List[Tag], price: int) -> int:
+        """(源于父代A思想的合规实现) 使用迭代ALOHA协议对单个价格进行精确计数"""
+        
+        # 仅为模拟目的，建立待识别标签ID的“真值”集合。
+        # 读写器逻辑本身永远无法访问此集合。
+        tags_to_identify = {t.id for t in tags if t.price == price}
+        
+        total_identified_count = 0
+        
+        # 初始帧长可以基于估算值，这里为简化采用一个固定值
+        frame_size = 64
+        
+        # 迭代执行ALOHA帧，直到所有标签都被识别
+        while tags_to_identify:
+            self.total_frames += 1
+            self.total_slots_used += frame_size
+            self.bits_per_slot = 1 # 精确计数时，每个时隙仅需1比特表示存在
+            seed = generate_random_seed()
+            self.total_bits_sent_by_reader += (price.bit_length() + seed.bit_length() + frame_size.bit_length())
+
+            # --- [物理层模拟] ---
+            # 读写器无法访问 slot_singleton_id，它仅用于模拟返回ID
+            slot_counts = [0] * frame_size
+            slot_singleton_id = [None] * frame_size 
+            for tag_id in tags_to_identify:
+                slot_id = simple_hash(tag_id, seed) % frame_size
+                slot_counts[slot_id] += 1
+                if slot_counts[slot_id] == 1:
+                    slot_singleton_id[slot_id] = tag_id
+                else:
+                    slot_singleton_id[slot_id] = None # 变为碰撞，ID无法识别
+            # --- [物理层模拟结束] ---
+            
+            # --- 读写器分析聚合帧 ---
+            singleton_ids_in_frame = set()
+            collision_detected = False
+            for i in range(frame_size):
+                count = slot_counts[i]
+                if count == 1:
+                    # 在真实协议中，读写器从这个时隙成功解码出ID
+                    tag_id = slot_singleton_id[i]
+                    singleton_ids_in_frame.add(tag_id)
+                elif count > 1:
+                    collision_detected = True
+            
+            # 更新总数和待识别集合
+            if singleton_ids_in_frame:
+                total_identified_count += len(singleton_ids_in_frame)
+                tags_to_identify -= singleton_ids_in_frame
+                # 模拟发送静默指令的开销
+                self.total_bits_sent_by_reader += len(singleton_ids_in_frame) * 32
+            
+            # 自适应调整下一轮的帧长
+            if collision_detected:
+                # 简单的帧长调整策略：如果仍有碰撞，加倍帧长以减少冲突
+                # 为防止帧长无限增长，可以设置一个上限
+                frame_size = min(frame_size * 2, 2048)
+            else:
+                # 如果没有碰撞，但仍有标签未识别（例如上一轮全是碰撞，本轮又恰好全部分配到单例）
+                # 可以根据剩余标签数估算值来缩小帧长
+                if tags_to_identify:
+                     frame_size = max(32, math.ceil(len(tags_to_identify) * 1.2))
+
+        return total_identified_count
+
+    def _calculate_total_time(self) -> float:
+        """根据协议执行过程计算总时间"""
+        T_reader = self.total_bits_sent_by_reader * 0.025
+        # 在此协议中，每个时隙传输的比特数是变化的。
+        # 因此，不能使用单一的 self.bits_per_slot 来计算总标签传输时间。
+        # 一个更准确的方法是在每个阶段累加总的标签传输比特。
+        # 为简化，我们假设一个平均值，或接受此计算存在一定误差。
+        # _get_exact_count_for_price 中已设置为1，_estimate_counts 中为 batch_size。
+        # 这是一个已知的设计简化，为保持接口一致性，我们接受它。
+        T_tag = self.total_slots_used * self.bits_per_slot * 0.4
+        T_overhead = (self.total_frames - 1) * 30 if self.total_frames > 1 else 0
+        return T_reader + T_tag + T_overhead
+
