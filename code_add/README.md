@@ -1,5 +1,7 @@
 # RFID 协议自优化 Web 平台
 
+图文操作说明、全部页面截图、项目目录结构和 GitHub 上传命令见 [仓库操作指南](../README.md)。
+
 当前 `code_add` 已统一为“面向多维统计场景的 RFID 协议自优化 Web 平台”。项目主线不再是旧 GUI 或云边端演示，而是围绕 RFID 统计协议的自动生成、验证、迭代和实验分析形成闭环。
 
 ## 启动方式
@@ -38,7 +40,9 @@ http://127.0.0.1:8765
 ## 关键文件
 
 - `course_project/web_app.py`：Web API、资产读取、AI 生成、验证沙箱、自动迭代和实验调度。
-- `course_project/selfopt_ui.py`：统一交互式 Web 工作台。
+- `course_project/selfopt_ui.py`：Web HTML 导出的兼容入口。
+- `course_project/static/`：独立 HTML、CSS 与 JavaScript，包含响应式工作台、文件搜索和编辑器交互。
+- `course_project/http_support.py`、`jobs.py`、`validation.py`：HTTP 边界、有界后台任务队列与参数校验。
 - `ai_protocol_optimizer.py`：调用大模型完成协议交叉变异、自修复和落盘。
 - `prompt_generation.py`：读取父代协议并生成交叉 Prompt。
 - `Validator.py`：协议物理约束验证。
@@ -48,7 +52,7 @@ http://127.0.0.1:8765
 
 ```powershell
 python -m py_compile course_project/web_app.py course_project/selfopt_ui.py course_project/test_course_project.py ai_protocol_optimizer.py prompt_generation.py Validator.py
-python -m unittest course_project.test_course_project -v
+python -m unittest course_project.test_course_project course_project.test_infrastructure -v
 ```
 
 课程报告生成脚本：

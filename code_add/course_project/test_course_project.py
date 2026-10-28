@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from functools import partial
+from unittest.mock import patch
 
 from course_project.database import database_stats, init_database, store_ai_job
 from course_project.web_app import (
@@ -12,10 +14,21 @@ from course_project.web_app import (
     run_selfopt_auto_iterate,
     selfopt_state,
     validate_selfopt_protocol,
+    PROJECT_ROOT,
 )
 
 
 class CourseProjectSmokeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        db_path = Path(temporary.name) / "tests.sqlite3"
+        init_database(db_path)
+        for name, function in (("database_stats", database_stats), ("store_ai_job", store_ai_job)):
+            patcher = patch(f"course_project.web_app.{name}", partial(function, db_path=db_path))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_selfopt_state_exposes_current_platform_assets(self) -> None:
         state = selfopt_state()
         scene_names = [scene["name"] for scene in state["scenes"]]
@@ -113,16 +126,16 @@ class CourseProjectSmokeTest(unittest.TestCase):
             self.assertEqual(stats["ai_jobs"][0]["protocol_name"], "unit_db_job")
 
     def test_experiment_task_runs_on_test_outputs(self) -> None:
-        result = run_experiment_task(
-            {
-                "task": "plot_final",
-                "source_scene": "test",
-                "output_dir": "Experiments",
-                "timeout_seconds": 120,
-            }
-        )
-
-        self.assertEqual(result["returncode"], 0)
+        with TemporaryDirectory(dir=PROJECT_ROOT / "Experiments") as tmp:
+            result = run_experiment_task(
+                {
+                    "task": "plot_final",
+                    "source_scene": "test",
+                    "output_dir": Path(tmp).relative_to(PROJECT_ROOT).as_posix(),
+                    "timeout_seconds": 120,
+                }
+            )
+            self.assertEqual(result["returncode"], 0)
 
 
 if __name__ == "__main__":

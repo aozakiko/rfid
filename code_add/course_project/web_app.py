@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import mimetypes
@@ -9,15 +10,14 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
-from uuid import uuid4
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -33,6 +33,12 @@ from course_project.database import (
     store_ai_job,
 )
 from course_project.selfopt_ui import INDEX_HTML as ADVANCED_INDEX_HTML
+from course_project.http_support import (
+    APIError, json_response, text_response, read_json_body, send_bytes, request_error as _request_error,
+)
+from course_project.jobs import JobManager
+from course_project.validation import bounded_int as _coerce_int, bounded_float, boolean_value
+from course_project.assets import import_file, preview_file
 
 
 COURSE_ROOT = Path(__file__).resolve().parent
@@ -40,8 +46,11 @@ IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 GENERATION_RE = re.compile(r"^generation_?(\d+)$")
 TEXT_FILE_SUFFIXES = {".py", ".txt", ".json", ".csv", ".md", ".log", ".html"}
 MAX_WEB_FILE_BYTES = 900_000
-BACKGROUND_JOBS: dict[str, dict[str, Any]] = {}
-BACKGROUND_JOBS_LOCK = threading.Lock()
+JOB_MANAGER = JobManager()
+STATIC_ROOT = COURSE_ROOT / "static"
+STATIC_FILES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8"}
+STATIC_FILES.update({"asset_ui.js": "text/javascript; charset=utf-8", "assets.css": "text/css; charset=utf-8"})
+FILE_WRITE_LOCK = threading.Lock()
 
 
 def discover_scenes() -> list[str]:
@@ -126,8 +135,11 @@ def _assert_text_file(path: Path) -> None:
         raise ValueError("文件过大，不适合在 Web 编辑器中打开")
 
 
-def _assert_editable_project_file(path: Path) -> None:
-    _assert_text_file(path)
+def _assert_editable_project_file(path: Path, *, check_size: bool = True) -> None:
+    if check_size:
+        _assert_text_file(path)
+    elif path.suffix.lower() not in TEXT_FILE_SUFFIXES:
+        raise ValueError("不支持该文本资产类型")
     rel = _relative_to_project(path)
     parts = Path(rel).parts
     if not parts:
@@ -219,7 +231,7 @@ def _base_protocol_rows() -> list[dict[str, Any]]:
     return rows
 
 
-def _prompt_rows(scene: str, *, limit: int = 60) -> list[dict[str, Any]]:
+def _prompt_rows(scene: str, *, limit: int | None = None) -> list[dict[str, Any]]:
     prompt_dir = _scene_path(scene) / "prompts"
     if not prompt_dir.exists():
         return []
@@ -235,16 +247,15 @@ def _prompt_rows(scene: str, *, limit: int = 60) -> list[dict[str, Any]]:
     ]
 
 
-def _experiment_artifact_rows(*, limit: int = 80) -> list[dict[str, Any]]:
+def _experiment_artifact_rows(*, limit: int | None = None) -> list[dict[str, Any]]:
     roots = [PROJECT_ROOT / "Experiments"]
-    suffixes = {".csv", ".json", ".pdf", ".png", ".svg", ".txt", ".log"}
     rows: list[dict[str, Any]] = []
     seen: set[Path] = set()
     for root in roots:
         if not root.exists():
             continue
-        for file_path in root.glob("*"):
-            if not file_path.is_file() or file_path.suffix.lower() not in suffixes:
+        for file_path in root.rglob("*"):
+            if not file_path.is_file() or file_path.suffix.lower() in {".py", ".pyc"} or any(part.startswith(".") or part == "__pycache__" for part in file_path.relative_to(root).parts):
                 continue
             resolved = file_path.resolve()
             if resolved in seen:
@@ -282,16 +293,15 @@ def _evolution_scenario_names() -> list[str]:
     return names
 
 
-def _output_artifact_rows(*, limit: int = 240) -> list[dict[str, Any]]:
+def _output_artifact_rows(*, limit: int | None = None) -> list[dict[str, Any]]:
     output_roots = [COURSE_ROOT / "outputs"]
     output_roots.extend(PROJECT_ROOT / scene / "outputs" for scene in discover_scenes())
-    suffixes = {".csv", ".json", ".html", ".md", ".txt", ".log", ".pdf", ".png", ".svg"}
     rows: list[dict[str, Any]] = []
     for output_root in output_roots:
         if not output_root.exists():
             continue
         for file_path in output_root.rglob("*"):
-            if not file_path.is_file() or file_path.suffix.lower() not in suffixes:
+            if not file_path.is_file() or any(part.startswith(".") or part == "__pycache__" for part in file_path.relative_to(output_root).parts):
                 continue
             try:
                 rel = _relative_to_project(file_path)
@@ -315,6 +325,7 @@ def _output_artifact_rows(*, limit: int = 240) -> list[dict[str, Any]]:
 def _assert_safe_raw_artifact(path: Path) -> None:
     resolved = path.resolve()
     allowed_roots = [(COURSE_ROOT / "outputs").resolve(), (PROJECT_ROOT / "Experiments").resolve()]
+    allowed_roots.extend((PROJECT_ROOT / scene / "outputs").resolve() for scene in discover_scenes())
     if not any(resolved == root or root in resolved.parents for root in allowed_roots):
         raise ValueError("只能预览 outputs 或 Experiments 中的产物")
     if not resolved.is_file():
@@ -348,7 +359,7 @@ def _scene_summary(scene: str) -> dict[str, Any]:
         "prompt_count": len(list((scene_dir / "prompts").glob("*.txt"))) if (scene_dir / "prompts").exists() else 0,
         "generations": generations,
         "protocol_files": protocols,
-        "prompts": _prompt_rows(scene, limit=20),
+        "prompts": _prompt_rows(scene),
     }
 
 
@@ -401,119 +412,24 @@ def selfopt_state() -> dict[str, Any]:
     }
 
 
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
-
-
-def _public_job(job: dict[str, Any]) -> dict[str, Any]:
-    copied = dict(job)
-    copied["elapsed_s"] = round(time.perf_counter() - float(job.get("started_perf", time.perf_counter())), 3)
-    copied.pop("started_perf", None)
-    return copied
-
-
-def _create_background_job(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-    job_id = uuid4().hex[:12]
-    job = {
-        "id": job_id,
-        "kind": kind,
-        "status": "queued",
-        "stage": "queued",
-        "progress": 0,
-        "created_at": _now_iso(),
-        "updated_at": _now_iso(),
-        "started_perf": time.perf_counter(),
-        "payload": {
-            key: value
-            for key, value in payload.items()
-            if key not in {"api_key", "api_key_value"}
-        },
-        "logs": ["任务已进入后台队列，浏览器会持续轮询进度。"],
-        "result": None,
-        "error": "",
-    }
-    with BACKGROUND_JOBS_LOCK:
-        BACKGROUND_JOBS[job_id] = job
-        if len(BACKGROUND_JOBS) > 80:
-            for old_id in sorted(BACKGROUND_JOBS, key=lambda item: BACKGROUND_JOBS[item]["created_at"])[:20]:
-                BACKGROUND_JOBS.pop(old_id, None)
-    return _public_job(job)
-
-
-def _update_background_job(
-    job_id: str,
-    *,
-    status: str | None = None,
-    stage: str | None = None,
-    progress: int | None = None,
-    log: str | None = None,
-    result: Any = None,
-    error: str | None = None,
-) -> None:
-    with BACKGROUND_JOBS_LOCK:
-        job = BACKGROUND_JOBS.get(job_id)
-        if not job:
-            return
-        if status is not None:
-            job["status"] = status
-        if stage is not None:
-            job["stage"] = stage
-        if progress is not None:
-            job["progress"] = max(0, min(100, int(progress)))
-        if log:
-            job["logs"].append(f"[{time.strftime('%H:%M:%S')}] {log}")
-            job["logs"] = job["logs"][-300:]
-        if result is not None:
-            job["result"] = result
-        if error is not None:
-            job["error"] = error
-        job["updated_at"] = _now_iso()
-
-
 def get_background_job(job_id: str) -> dict[str, Any]:
-    with BACKGROUND_JOBS_LOCK:
-        job = BACKGROUND_JOBS.get(job_id)
-        if not job:
-            raise KeyError(f"未知后台任务: {job_id}")
-        return _public_job(job)
+    return JOB_MANAGER.get(job_id)
 
 
 def start_background_task(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-    job = _create_background_job(kind, payload)
-    job_id = job["id"]
+    workflows = {"ai_generation": run_ai_generation, "auto_iterate": run_selfopt_auto_iterate}
+    if kind not in workflows:
+        raise ValueError(f"Unknown background task: {kind}")
 
-    def runner() -> None:
-        try:
-            _update_background_job(job_id, status="running", stage="initializing", progress=3, log="后端任务已启动，正在读取配置与父代协议。")
-            if kind == "ai_generation":
-                result = run_ai_generation(
-                    payload,
-                    progress_logger=lambda message, progress=None, stage=None: _update_background_job(
-                        job_id,
-                        stage=stage or "ai_generation",
-                        progress=progress,
-                        log=str(message),
-                    ),
-                )
-            elif kind == "auto_iterate":
-                result = run_selfopt_auto_iterate(
-                    payload,
-                    progress_logger=lambda message, progress=None, stage=None: _update_background_job(
-                        job_id,
-                        stage=stage or "auto_iterate",
-                        progress=progress,
-                        log=str(message),
-                    ),
-                )
-            else:
-                raise ValueError(f"未知后台任务类型: {kind}")
-            _update_background_job(job_id, status="success", stage="done", progress=100, log="任务完成，结果已写入平台状态。", result=result)
-        except Exception as exc:
-            _update_background_job(job_id, status="failed", stage="failed", progress=100, log=f"任务失败: {exc}", error=traceback.format_exc())
+    def work(update):
+        return workflows[kind](
+            payload,
+            progress_logger=lambda message, progress=None, stage=None: update(
+                stage=stage, progress=progress, log=str(message),
+            ),
+        )
 
-    thread = threading.Thread(target=runner, name=f"selfopt-{kind}-{job_id}", daemon=True)
-    thread.start()
-    return get_background_job(job_id)
+    return JOB_MANAGER.submit(kind, payload, work)
 
 
 def read_project_file(relative_path: str) -> dict[str, Any]:
@@ -521,10 +437,12 @@ def read_project_file(relative_path: str) -> dict[str, Any]:
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"文件不存在: {relative_path}")
     _assert_text_file(path)
+    content = path.read_bytes()
     return {
         "path": _relative_to_project(path),
         "name": path.name,
-        "content": path.read_text(encoding="utf-8", errors="replace"),
+        "content": content.decode("utf-8-sig", errors="replace"),
+        "revision": hashlib.sha256(content).hexdigest(),
         "size": path.stat().st_size,
         "mtime": int(path.stat().st_mtime),
     }
@@ -536,9 +454,25 @@ def save_project_file(payload: dict[str, Any]) -> dict[str, Any]:
     content = str(payload.get("content") or "")
     if len(content.encode("utf-8")) > MAX_WEB_FILE_BYTES:
         raise ValueError("保存内容过大")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return {"saved": True, "path": _relative_to_project(path), "size": path.stat().st_size}
+    with FILE_WRITE_LOCK:
+        expected_revision = payload.get("revision")
+        if expected_revision is not None:
+            current_revision = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+            if current_revision != expected_revision:
+                raise APIError("文件已被其他操作修改，请重新读取后再保存", HTTPStatus.CONFLICT)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = None
+        try:
+            # Replace atomically so concurrent readers never observe a partial file.
+            with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".tmp", delete=False) as handle:
+                temporary_path = Path(handle.name)
+                handle.write(content.encode("utf-8"))
+            os.replace(temporary_path, path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+    return {"saved": True, "path": _relative_to_project(path), "size": path.stat().st_size,
+            "revision": hashlib.sha256(content.encode("utf-8")).hexdigest()}
 
 
 TASK_TEMPLATE = '''#!/usr/bin/env python
@@ -707,7 +641,7 @@ def _target_values_for_profile(tags: list[Any], true_info: dict[str, Any], task_
         mean = sum(prices) / len(prices)
         return [sum((x - mean) ** 2 for x in prices) / len(prices)]
     if task_profile == "median_quantile":
-        q = float(payload.get("quantile", 0.5))
+        q = bounded_float(payload, "quantile", 0.5, 0.0, 1.0)
         q = max(0.0, min(1.0, q))
         ordered = sorted(prices)
         index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * q)))
@@ -736,8 +670,8 @@ def _profile_hit(estimated: list[float], target: list[float], task_profile: str,
         return False
     if task_profile == "mode_query":
         return set(int(x) for x in estimated).issubset(set(int(x) for x in target))
-    tolerance = float(payload.get("relative_tolerance", 0.15))
-    absolute_tolerance = float(payload.get("absolute_tolerance", 2.0))
+    tolerance = bounded_float(payload, "relative_tolerance", 0.15, 0.0, 1.0)
+    absolute_tolerance = bounded_float(payload, "absolute_tolerance", 2.0, 0.0, 1e12)
     error = abs(estimated[0] - target[0])
     limit = max(absolute_tolerance, abs(target[0]) * tolerance)
     return error <= limit
@@ -766,6 +700,7 @@ def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
     total_time = 0.0
     samples: list[dict[str, Any]] = []
     runtime_error = ""
+    completed_runs = 0
     for run_index in range(total_runs):
         tags, true_info = generate_tags(num_tags, price_min, price_max)
         try:
@@ -777,6 +712,7 @@ def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         estimated = _estimated_values(raw_values)
         hit = _profile_hit(estimated, target, task_profile, payload)
         passed_runs += int(hit)
+        completed_runs += 1
         total_time += float(exec_time_ms or 0.0)
         if len(samples) < 5:
             samples.append(
@@ -791,7 +727,6 @@ def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
                 }
             )
 
-    completed_runs = len(samples) if runtime_error else total_runs
     avg_time = round(total_time / max(1, completed_runs), 4)
     pass_rate = round(passed_runs / max(1, completed_runs) * 100, 2)
     return {
@@ -841,7 +776,9 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
     protocol_name = _default_protocol_name_for_task(payload.get("protocol_name") or "web_ai_candidate", task_profile)
     target_generation = str(payload.get("target_generation") or "next")
     run_mode = str(payload.get("run_mode") or "generate").strip()
-    dry_run = run_mode == "preview" or bool(payload.get("dry_run", False))
+    if run_mode not in {"preview", "generate"}:
+        raise ValueError("run_mode 必须是 preview 或 generate")
+    dry_run = run_mode == "preview" or boolean_value(payload, "dry_run", False)
     requirement_text = str(payload.get("requirement_text") or "")
     retry_attempts = _coerce_int(payload, "retry_attempts", 3, 1, 6)
 
@@ -891,7 +828,7 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
         endpoint_path=payload.get("endpoint_path"),
         api_key_env=str(payload.get("api_key_env") or "GEEK_API_KEY"),
         api_key_value=payload.get("api_key_value") or payload.get("api_key") or None,
-        temperature=float(payload.get("temperature", 0.2)),
+        temperature=bounded_float(payload, "temperature", 0.2, 0.0, 2.0),
         max_tokens=_coerce_int(payload, "max_tokens", 2800, 256, 32000),
         timeout_seconds=_coerce_int(payload, "timeout_seconds", 120, 20, 3600),
         validate_num_tags=_coerce_int(payload, "validate_num_tags", 120, 20, 5000),
@@ -1052,7 +989,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
         raise ValueError(f"未知任务画像: {task_profile}")
     prefix = _default_iteration_prefix_for_task(payload.get("prefix") or "web_auto_iter", task_profile)
     iterations = _coerce_int(payload, "iterations", 3, 1, 12)
-    dry_run = bool(payload.get("dry_run", True))
+    dry_run = boolean_value(payload, "dry_run", True)
     max_repair_rounds = _coerce_int(payload, "max_repair_rounds", 0 if dry_run else 1, 0, 5)
     validate_num_tags = _coerce_int(payload, "validate_num_tags", 80, 20, 5000)
     retry_attempts = _coerce_int(payload, "retry_attempts", 3, 1, 6)
@@ -1121,7 +1058,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             endpoint_path=payload.get("endpoint_path"),
             api_key_env=str(payload.get("api_key_env") or "GEEK_API_KEY"),
             api_key_value=payload.get("api_key_value") or payload.get("api_key"),
-            temperature=float(payload.get("temperature", 0.2)),
+            temperature=bounded_float(payload, "temperature", 0.2, 0.0, 2.0),
             max_tokens=_coerce_int(payload, "max_tokens", 2800, 256, 16000),
             timeout_seconds=_coerce_int(payload, "timeout_seconds", 120, 20, 1800),
             validate_num_tags=validate_num_tags,
@@ -1497,51 +1434,23 @@ def build_catalog() -> dict[str, Any]:
     }
 
 
-def _coerce_int(payload: dict[str, Any], key: str, default: int, low: int, high: int) -> int:
-    try:
-        value = int(payload.get(key, default))
-    except (TypeError, ValueError):
-        value = default
-    return max(low, min(high, value))
-
-
-def json_response(handler: BaseHTTPRequestHandler, data: Any, status: int = 200) -> None:
-    body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
-
-
-def text_response(handler: BaseHTTPRequestHandler, text: str, content_type: str = "text/html; charset=utf-8") -> None:
-    body = text.encode("utf-8")
-    handler.send_response(200)
-    handler.send_header("Content-Type", content_type)
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
-
-
 def file_response(handler: BaseHTTPRequestHandler, path: Path) -> None:
     _assert_safe_raw_artifact(path)
-    body = path.read_bytes()
     content_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     if path.suffix.lower() in {".html", ".txt", ".md", ".csv", ".json", ".log", ".svg"}:
         content_type += "; charset=utf-8"
-    handler.send_response(200)
-    handler.send_header("Content-Type", content_type)
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    send_bytes(handler, path.read_bytes(), content_type, sandbox=path.suffix.lower() in {".html", ".svg"})
 
 
-def read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
-    length = int(handler.headers.get("Content-Length", "0") or "0")
-    if length <= 0:
-        return {}
-    raw = handler.rfile.read(length)
-    return json.loads(raw.decode("utf-8"))
+def _asset_path(relative: str) -> Path:
+    path = _resolve_project_path(relative)
+    try:
+        _assert_safe_raw_artifact(path)
+    except ValueError:
+        _assert_editable_project_file(path, check_size=False)
+    if not path.is_file():
+        raise FileNotFoundError("找不到该资产文件")
+    return path
 
 
 class CourseRequestHandler(BaseHTTPRequestHandler):
@@ -1557,6 +1466,9 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
         try:
             if path == "/":
                 text_response(self, ADVANCED_INDEX_HTML)
+            elif path.startswith("/static/") and path.removeprefix("/static/") in STATIC_FILES:
+                name = path.removeprefix("/static/")
+                send_bytes(self, (STATIC_ROOT / name).read_bytes(), STATIC_FILES[name])
             elif path == "/api/health":
                 json_response(self, {"ok": True, "project_root": str(PROJECT_ROOT)})
             elif path == "/api/selfopt/state":
@@ -1569,6 +1481,13 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/selfopt/raw":
                 rel_path = query.get("path", [""])[0]
                 file_response(self, _resolve_project_path(rel_path))
+            elif path == "/api/selfopt/preview":
+                asset = _asset_path(query.get("path", [""])[0])
+                page = _coerce_int({"page": query.get("page", ["1"])[0]}, "page", 1, 1, 1000000)
+                json_response(self, preview_file(asset, _relative_to_project(asset), page))
+            elif path == "/api/selfopt/download":
+                asset = _asset_path(query.get("path", [""])[0])
+                send_bytes(self, asset.read_bytes(), "application/octet-stream", download_name=asset.name)
             elif path == "/api/selfopt/file":
                 rel_path = query.get("path", [""])[0]
                 json_response(self, read_project_file(rel_path))
@@ -1577,16 +1496,16 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             else:
                 json_response(self, {"error": f"unknown path: {path}"}, HTTPStatus.NOT_FOUND)
         except Exception as exc:
-            json_response(
-                self,
-                {"error": str(exc), "traceback": traceback.format_exc()},
-                HTTPStatus.INTERNAL_SERVER_ERROR,
-            )
+            _request_error(self, exc)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
         try:
+            if path == "/api/selfopt/upload":
+                result = import_file(self, PROJECT_ROOT, discover_scenes(), parse_qs(parsed.query))
+                json_response(self, result, HTTPStatus.CREATED)
+                return
             payload = read_json_body(self)
             if path == "/api/selfopt/file":
                 json_response(self, save_project_file(payload))
@@ -1598,7 +1517,7 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/selfopt/ai-run":
                 json_response(self, run_ai_generation(payload))
             elif path == "/api/selfopt/ai-run-async":
-                json_response(self, {"job": start_background_task("ai_generation", payload)})
+                json_response(self, {"job": start_background_task("ai_generation", payload)}, HTTPStatus.ACCEPTED)
             elif path == "/api/selfopt/ai-models":
                 json_response(self, probe_ai_runtime(payload))
             elif path == "/api/selfopt/validate":
@@ -1611,19 +1530,20 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/selfopt/auto-iterate":
                 json_response(self, run_selfopt_auto_iterate(payload))
             elif path == "/api/selfopt/auto-iterate-async":
-                json_response(self, {"job": start_background_task("auto_iterate", payload)})
+                json_response(self, {"job": start_background_task("auto_iterate", payload)}, HTTPStatus.ACCEPTED)
             elif path == "/api/selfopt/experiments":
                 json_response(self, run_experiment_task(payload))
             else:
                 json_response(self, {"error": f"unknown path: {path}"}, HTTPStatus.NOT_FOUND)
-        except ValueError as exc:
-            json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:
-            json_response(
-                self,
-                {"error": str(exc), "traceback": traceback.format_exc()},
-                HTTPStatus.INTERNAL_SERVER_ERROR,
-            )
+            _request_error(self, exc)
+
+
+class CourseHTTPServer(ThreadingHTTPServer):
+    """Small server policy wrapper used by the local console."""
+
+    allow_reuse_address = True
+    daemon_threads = True
 
 
 def main() -> int:
@@ -1633,7 +1553,7 @@ def main() -> int:
     args = parser.parse_args()
 
     init_database()
-    server = ThreadingHTTPServer((args.host, args.port), CourseRequestHandler)
+    server = CourseHTTPServer((args.host, args.port), CourseRequestHandler)
     print(f"RFID self-optimization platform: http://{args.host}:{args.port}")
     try:
         server.serve_forever()
@@ -1641,6 +1561,7 @@ def main() -> int:
         print("Shutting down RFID self-optimization platform.")
     finally:
         server.server_close()
+        JOB_MANAGER.shutdown()
     return 0
 
 

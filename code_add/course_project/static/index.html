@@ -1,0 +1,989 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101d30" />
+    <title>RFID Lab · 协议自优化平台</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23101d30'/%3E%3Cpath d='M8 11v10m5-16v22m6-18v14m5-10v6' stroke='%237ed1c8' stroke-width='2'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/static/app.css" />
+    <link rel="stylesheet" href="/static/assets.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳转到工作区</a>
+    <div id="manualModal" class="modal-backdrop">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="manualTitle"
+        tabindex="-1"
+      >
+        <div class="modal-head">
+          <h2 id="manualTitle">页面说明</h2>
+          <button class="btn secondary" id="closeManual" type="button">
+            我已了解
+          </button>
+        </div>
+        <div class="modal-body" id="manualBody"></div>
+      </div>
+    </div>
+    <div id="filePreviewModal" class="modal-backdrop">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="filePreviewTitle"
+        tabindex="-1"
+      >
+        <div class="modal-head">
+          <h2 id="filePreviewTitle">文件预览</h2>
+          <button class="btn secondary" id="closeFilePreview" type="button">
+            关闭
+          </button>
+        </div>
+        <div class="modal-body">
+          <div id="filePreviewBody" class="preview-pane">等待预览</div>
+        </div>
+      </div>
+    </div>
+    <div class="shell">
+      <aside>
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg
+              viewBox="0 0 32 32"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M7 11v10m6-16v22m6-18v14m6-10v6" />
+            </svg>
+          </div>
+          <div>
+            <strong>RFID <em>Lab</em></strong
+            ><span>协议自优化实验平台</span>
+          </div>
+        </div>
+        <div class="nav-caption">工作空间 <span>WORKSPACE</span></div>
+        <nav id="nav" aria-label="主导航"></nav>
+        <div class="sidebar-foot">
+          <span class="dot"></span>本地实验工作台
+          <div>从协议构想到实验结果</div>
+        </div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <header class="topbar">
+          <div class="page-heading">
+            <div class="breadcrumb">
+              工作空间 <span>/</span> <span id="pageCrumb">平台总览</span>
+            </div>
+            <h1 id="pageTitle">平台总览</h1>
+            <p class="muted" id="pageDescription">
+              查看场景资产、协议演化与实验进展。
+            </p>
+          </div>
+          <div class="header-tools">
+            <div class="status" role="status" aria-live="polite">
+              <span id="statusDot" class="dot"></span
+              ><span id="statusText">连接中</span>
+            </div>
+            <button class="btn secondary" id="openManualTop" type="button">
+              使用指南 <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+        </header>
+
+        <section id="view-overview" class="view active">
+          <section class="hero">
+            <div class="hero-copy">
+              <div class="eyebrow">
+                <span></span> INTELLIGENT PROTOCOL WORKSPACE
+              </div>
+              <h2>让每一代协议，<br />离最优更近一步。</h2>
+              <p>
+                连接场景、生成与验证，在一个工作台中完成<br
+                  class="desktop-break"
+                />
+                RFID 协议的探索、演化和实验评估。
+              </p>
+              <div class="actions">
+                <button class="btn hero-primary" data-go="ai" type="button">
+                  开始协议设计 <span aria-hidden="true">→</span></button
+                ><button
+                  class="btn hero-secondary"
+                  data-go="assets"
+                  type="button"
+                >
+                  浏览协议资产
+                </button>
+              </div>
+            </div>
+            <div class="hero-visual" aria-hidden="true">
+              <svg viewBox="0 0 410 240" fill="none">
+                <defs>
+                  <linearGradient id="flow" x1="0" y1="0" x2="410" y2="240">
+                    <stop stop-color="#5eead4" />
+                    <stop offset="1" stop-color="#82aaff" />
+                  </linearGradient>
+                  <pattern
+                    id="dots"
+                    width="20"
+                    height="20"
+                    patternUnits="userSpaceOnUse"
+                  >
+                    <circle cx="1" cy="1" r="1" fill="#8ca8cd" opacity=".25" />
+                  </pattern>
+                </defs>
+                <rect width="410" height="240" fill="url(#dots)" />
+                <g stroke="url(#flow)" stroke-opacity=".4">
+                  <path
+                    d="M64 62L198 118 340 54M64 62L80 186 198 118 333 190 340 54M80 186L333 190M64 62L340 54"
+                  />
+                  <circle cx="198" cy="118" r="73" stroke-dasharray="4 8" />
+                  <circle cx="198" cy="118" r="100" stroke-opacity=".15" />
+                </g>
+                <g fill="#172f4b" stroke="url(#flow)">
+                  <rect x="43" y="41" width="42" height="42" rx="12" />
+                  <rect x="59" y="165" width="42" height="42" rx="12" />
+                  <rect x="319" y="33" width="42" height="42" rx="12" />
+                  <rect x="312" y="169" width="42" height="42" rx="12" />
+                  <rect x="165" y="85" width="66" height="66" rx="20" />
+                </g>
+                <g stroke="#90e0d5" stroke-width="2" stroke-linecap="round">
+                  <path
+                    d="M187 105v26m7-32v38m8-26v14m7-19v24M57 62h14M64 55v14M72 180v12m8-17v22m8-15v10M330 54l7 7 12-14M324 190h18m-13-7v14m8-14v14"
+                  />
+                </g>
+                <g
+                  fill="#b4d5f5"
+                  font-family="Segoe UI,sans-serif"
+                  font-size="11"
+                >
+                  <text x="39" y="27">SCENARIO</text>
+                  <text x="318" y="21">VALIDATE</text>
+                  <text x="56" y="229">GENERATE</text>
+                  <text x="312" y="229">EVOLVE</text>
+                </g>
+              </svg>
+              <div class="visual-caption">
+                SCENARIO <span>→</span> GENERATE <span>→</span> VALIDATE
+                <span>→</span> EVOLVE
+              </div>
+            </div>
+          </section>
+          <div class="section-label">
+            <h2>工作空间概况</h2>
+            <span class="muted">来自本地项目资产</span>
+          </div>
+          <div
+            class="overview-metrics"
+            id="overviewMetrics"
+            aria-label="项目统计"
+          ></div>
+          <section class="panel pad">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0">
+              <div>
+                <div class="eyebrow ink">THE WORKFLOW</div>
+                <h2>从需求到实验的完整路径</h2>
+              </div>
+              <button class="btn secondary" data-help="overview" type="button">
+                了解流程 <span aria-hidden="true">↗</span>
+              </button>
+            </div>
+            <div class="loop" id="closedLoop" style="margin-top: 14px"></div>
+          </section>
+          <div class="split">
+            <section class="panel pad">
+              <h2>当前场景世代分布</h2>
+              <div
+                class="bar-chart"
+                id="generationBars"
+                style="margin-top: 14px"
+              ></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>场景资产状态</h2>
+                <span class="pill" id="defaultScenePill">-</span>
+              </div>
+              <div class="scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>场景</th>
+                      <th>世代</th>
+                      <th>协议</th>
+                      <th>Prompt</th>
+                      <th>任务文件</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sceneRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-assets" class="view">
+          <div class="guide">
+            <b>本页说明：</b>场景与代码页是资产库。这里管理
+            `Task.py`、`generation*`
+            协议、Prompt、base_protocol。点击文件会在右侧编辑器直接查看，协议文件也可以在
+            AI 页和 Outputs 页原地查看。
+            <div class="help-list">
+              <div>
+                <b>创建新场景：</b
+                >生成一个新的任务目录，便于扩展均值、方差、盘点等新场景。
+              </div>
+              <div>
+                <b>复制基线协议：</b>把 `base_protocol` 中的父代协议放入某个
+                generation，作为可演化基因。
+              </div>
+              <div>
+                <b>保存当前文件：</b>保存右侧编辑器内容，适合微调 Prompt、Task
+                或协议实现。
+              </div>
+            </div>
+          </div>
+          <div class="workbench">
+            <div>
+              <section class="panel pad">
+                <h2>场景与基线协议</h2>
+                <div class="form-grid" style="margin-top: 12px">
+                  <div>
+                    <label>当前场景</label
+                    ><select id="assetScene"></select>
+                  </div>
+                  <div>
+                    <label>新场景名</label
+                    ><input id="newSceneName" placeholder="rfid_custom_scene" />
+                  </div>
+                  <div>
+                    <label>基线协议</label
+                    ><select id="baselineProtocol"></select>
+                  </div>
+                  <div>
+                    <label>复制到世代</label
+                    ><input
+                      id="baselineTargetGeneration"
+                      value="generation_0"
+                    />
+                  </div>
+                </div>
+                <div class="actions">
+                  <button class="btn blue" id="createScene" type="button">
+                    创建新场景
+                  </button>
+                  <button class="btn teal" id="copyBaseline" type="button">
+                    复制基线协议
+                  </button>
+                  <button
+                    class="btn secondary"
+                    id="refreshAssets"
+                    type="button"
+                  >
+                    刷新资产
+                  </button>
+                </div>
+              </section>
+              <section class="panel">
+                <div class="panel-head">
+                  <h2>文件资产</h2>
+                  <span class="pill" id="fileCountPill">0</span>
+                </div>
+                <div class="asset-search">
+                  <label class="sr-only" for="assetSearch">搜索文件资产</label
+                  ><input
+                    id="assetSearch"
+                    type="search"
+                    placeholder="搜索文件名、世代或路径…"
+                  />
+                </div>
+                <div class="scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>名称</th>
+                        <th>分组/路径</th>
+                        <th>大小</th>
+                      </tr>
+                    </thead>
+                    <tbody id="fileRows"></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+            <section class="panel pad">
+              <div class="editor-title">
+                <div>
+                  <h2>代码/Prompt 编辑器</h2>
+                  <div class="muted mono" id="currentFilePath">未选择文件</div>
+                </div>
+                <div class="actions" style="margin-top: 0">
+                  <button class="btn secondary" id="reloadFile" type="button">
+                    重新读取</button
+                  ><button class="btn green" id="saveFile" type="button">
+                    保存当前文件
+                  </button>
+                </div>
+              </div>
+              <textarea
+                id="fileEditor"
+                spellcheck="false"
+                aria-label="代码与 Prompt 编辑器"
+                placeholder="从左侧选择文件，开始查看或编辑。"
+              ></textarea>
+              <div class="editor-foot">
+                <span id="editorState">尚未选择文件</span
+                ><span>Ctrl / ⌘ + S 保存</span>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-ai" class="view">
+          <div class="guide">
+            <b>本页说明：</b>Prompt 与 AI
+            页只负责“单次协议生成”：选择一个场景、一个任务画像、两个父代协议，生成一个候选子代。父代池与多轮组合放在“自动迭代”页。
+            <div class="help-list">
+              <div>
+                <b>检查模型是否可用：</b>发送最小请求，确认 Base URL、模型名和
+                Key 可用。
+              </div>
+              <div>
+                <b>预览生成任务：</b>只创建 Prompt
+                与目标路径，不调用模型，也不会生成协议文件。
+              </div>
+              <div>
+                <b>生成协议代码：</b>后台调用大模型，写入 `.py`
+                协议文件，并进入验证沙箱。
+              </div>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div>
+              <section class="panel pad">
+                <h2>单次生成输入</h2>
+                <div class="form-grid" style="margin-top: 12px">
+                  <div>
+                    <label>场景</label
+                    ><select id="aiScene"></select>
+                  </div>
+                  <div>
+                    <label>任务画像</label
+                    ><select id="taskProfile"></select>
+                  </div>
+                  <div>
+                    <label>父代 A</label
+                    ><select id="aiParentA"></select>
+                  </div>
+                  <div>
+                    <label>父代 B</label
+                    ><select id="aiParentB"></select>
+                  </div>
+                </div>
+                <div class="mini-note" id="taskProfileInfo">
+                  正在读取任务画像说明...
+                </div>
+                <details style="margin-top: 12px">
+                  <summary class="muted">
+                    高级需求约束（可选）：写给大模型看的业务补充，不填写也可以生成
+                  </summary>
+                  <textarea
+                    id="requirementText"
+                    style="min-height: 120px; margin-top: 10px"
+                  >
+面向工业物联网多维统计场景，生成一个在通信开销、估计精度和物理层约束之间平衡的 RFID 协议。</textarea>
+                </details>
+              </section>
+              <section class="panel pad">
+                <h2>大模型生成配置</h2>
+                <div class="form-grid" style="margin-top: 12px">
+                  <div>
+                    <label>输出协议名</label
+                    ><input id="aiProtocolName" value="web_ai_candidate" />
+                  </div>
+                  <div>
+                    <label>目标世代</label
+                    ><input id="aiTargetGeneration" value="next" />
+                  </div>
+                  <div><label>Base URL</label><input id="aiBaseUrl" /></div>
+                  <div><label>模型名</label><input id="aiModel" /></div>
+                  <div>
+                    <label>Endpoint Path</label
+                    ><input id="aiEndpoint" value="/v1/chat/completions" />
+                  </div>
+                  <div>
+                    <label>API Key 环境变量</label
+                    ><input id="aiKeyEnv" value="GEEK_API_KEY" />
+                  </div>
+                  <div>
+                    <label>临时 API Key</label
+                    ><input
+                      id="aiApiKey"
+                      type="password"
+                      placeholder="可留空，使用环境变量"
+                    />
+                  </div>
+                  <div>
+                    <label>自修复轮数</label
+                    ><input id="aiRepairRounds" type="number" value="1" />
+                  </div>
+                  <div>
+                    <label>验证标签数</label
+                    ><input id="aiValidateTags" type="number" value="120" />
+                  </div>
+                  <div>
+                    <label>最大输出 tokens</label
+                    ><input id="aiMaxTokens" type="number" value="3600" />
+                  </div>
+                  <div>
+                    <label>超时秒数</label
+                    ><input id="aiTimeout" type="number" value="180" />
+                  </div>
+                  <div>
+                    <label>temperature</label
+                    ><input
+                      id="aiTemperature"
+                      type="number"
+                      step="0.1"
+                      value="0.2"
+                    />
+                  </div>
+                </div>
+                <div class="actions">
+                  <button class="btn secondary" id="probeModel" type="button">
+                    检查模型是否可用
+                  </button>
+                  <button class="btn secondary" id="listModels" type="button">
+                    列出可用模型
+                  </button>
+                  <button class="btn teal" id="previewAi" type="button">
+                    预览生成任务
+                  </button>
+                  <button class="btn green" id="runAi" type="button">
+                    生成协议代码
+                  </button>
+                </div>
+                <div class="mini-note" id="aiRuntimeSummary">
+                  正在读取大模型配置状态...
+                </div>
+                <div
+                  class="grid-4"
+                  id="aiRuntimeMetrics"
+                  style="margin-top: 12px"
+                ></div>
+                <div class="progress-wrap">
+                  <div class="progress-label">
+                    <span id="aiJobTitle">AI 生成进度</span
+                    ><span id="aiJobPct">0%</span>
+                  </div>
+                  <div class="progress"><span id="aiJobBar"></span></div>
+                  <div
+                    class="step-grid"
+                    id="aiStageFlow"
+                    style="margin-top: 12px"
+                  ></div>
+                  <pre class="console" id="aiOutput">等待操作</pre>
+                </div>
+              </section>
+            </div>
+            <div>
+              <section class="panel">
+                <div class="panel-head">
+                  <h2>Prompt 文件</h2>
+                  <span class="pill" id="promptCountPill">0</span>
+                </div>
+                <div class="scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>文件</th>
+                        <th>大小</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="promptRows"></tbody>
+                  </table>
+                </div>
+              </section>
+              <section class="panel pad">
+                <h2>生成协议列表</h2>
+                <div id="generatedProtocols"></div>
+              </section>
+              <section class="panel pad">
+                <div
+                  class="panel-head"
+                  style="padding: 0 0 12px; border-bottom: 0"
+                >
+                  <h2 id="aiPreviewTitle">Prompt/协议预览</h2>
+                  <span class="pill">本页内查看</span>
+                </div>
+                <div id="aiPreview" class="preview-pane">
+                  点击 Prompt 或生成协议的“查看”按钮后，会在这里显示内容。
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-validate" class="view">
+          <div class="guide">
+            <b>本页说明：</b
+            >验证沙箱聚焦单协议验证。它会按任务画像计算目标值，并检查物理约束、功能命中率、信息隔离静态扫描，避免干扰自优化主流程。
+            <div class="help-list">
+              <div>
+                <b>验证协议：</b
+                >运行选中协议，展示硬约束、功能命中、信息隔离和耗时。
+              </div>
+              <div>
+                <b>相对误差容忍：</b
+                >用于均值、方差、分位数、基数估计等单值任务。
+              </div>
+            </div>
+          </div>
+          <div class="grid-2">
+            <section class="panel pad">
+              <h2>单协议验证</h2>
+              <div class="form-grid" style="margin-top: 12px">
+                <div>
+                  <label>场景</label
+                  ><select id="validateScene"></select>
+                </div>
+                <div>
+                  <label>任务画像</label
+                  ><select id="validateTaskProfile"></select>
+                </div>
+                <div>
+                  <label>协议</label
+                  ><select id="validateProtocol"></select>
+                </div>
+                <div>
+                  <label>标签数量</label
+                  ><input id="validateNumTags" type="number" value="120" />
+                </div>
+                <div>
+                  <label>重复次数</label
+                  ><input id="validateRuns" type="number" value="3" />
+                </div>
+                <div>
+                  <label>价格/数值下限</label
+                  ><input id="validatePriceMin" type="number" value="1" />
+                </div>
+                <div>
+                  <label>价格/数值上限</label
+                  ><input id="validatePriceMax" type="number" value="1000" />
+                </div>
+                <div>
+                  <label>相对误差容忍</label
+                  ><input
+                    id="validateTolerance"
+                    type="number"
+                    step="0.01"
+                    value="0.15"
+                  />
+                </div>
+              </div>
+              <div class="mini-note">
+                这里的“任务画像”会改变验证目标值的计算方式。比如均值画像会比较估计均值，分位数画像会比较中位数/分位数，缺失盘点画像会关注库存缺失识别。
+              </div>
+              <div class="actions">
+                <button class="btn teal" id="runValidate" type="button">
+                  验证协议
+                </button>
+              </div>
+            </section>
+            <section class="panel pad">
+              <h2>验证结果</h2>
+              <div
+                class="grid-4"
+                id="validateMetrics"
+                style="margin-top: 12px"
+              ></div>
+              <div id="validateOutput">等待验证</div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-iterate" class="view">
+          <div class="guide">
+            <b>本页说明：</b>自动迭代是课程项目最核心的闭环：父代池两两组合 ->
+            生成 Prompt -> 调用模型 -> 保存子代 -> 验证 ->
+            审计记录。页面会实时显示轮次、模型连接、生成文件和验证结果。
+            <div class="help-list">
+              <div><b>只预览迭代任务：</b>每轮只生成 Prompt 和目标路径。</div>
+              <div>
+                <b>启动自动迭代：</b>后台执行全部轮次，进度条和日志会持续刷新。
+              </div>
+              <div>
+                <b>父代协议池：</b
+                >参与交叉的协议集合；至少两个，系统会两两组合。
+              </div>
+            </div>
+          </div>
+          <div class="grid-2">
+            <section class="panel pad">
+              <h2>自动迭代配置</h2>
+              <div class="form-grid" style="margin-top: 12px">
+                <div>
+                  <label>场景</label
+                  ><select id="iterateScene"></select>
+                </div>
+                <div>
+                  <label>任务画像</label
+                  ><select id="iterateTaskProfile"></select>
+                </div>
+                <div>
+                  <label>协议前缀</label
+                  ><input id="iteratePrefix" value="web_auto_iter" />
+                </div>
+                <div>
+                  <label>迭代轮数</label
+                  ><input id="iterateCount" type="number" value="3" />
+                </div>
+                <div>
+                  <label>验证标签数</label
+                  ><input id="iterateValidateTags" type="number" value="80" />
+                </div>
+                <div>
+                  <label>修复轮数</label
+                  ><input id="iterateRepairRounds" type="number" value="1" />
+                </div>
+                <div class="check-row">
+                  <input id="iteratePreviewOnly" type="checkbox" /><span
+                    >只预览迭代任务，不调用模型</span
+                  >
+                </div>
+              </div>
+              <div class="mini-note" id="iterateTaskProfileInfo">
+                <b>任务画像</b>决定每一轮 Prompt、协议命名和验证口径。
+              </div>
+              <label style="margin-top: 12px">父代协议池</label
+              ><input id="iterateParents" value="g2_1, g2_2, g8_3, g8_4" />
+              <details style="margin-top: 12px">
+                <summary class="muted">
+                  高级需求约束（可选）：会写入每轮 Prompt
+                </summary>
+                <textarea
+                  id="iterateRequirementText"
+                  style="min-height: 110px; margin-top: 10px"
+                >
+面向工业物联网多维统计场景，优先保证协议可运行、可验证、通信开销可控。</textarea>
+              </details>
+              <div class="actions">
+                <button
+                  class="btn secondary"
+                  id="useTopIterParents"
+                  type="button"
+                >
+                  填入推荐父代池</button
+                ><button class="btn blue" id="runIteration" type="button">
+                  启动自动迭代
+                </button>
+              </div>
+            </section>
+            <section class="panel pad">
+              <h2>父代池画像</h2>
+              <div
+                class="bar-chart"
+                id="parentPoolBars"
+                style="margin-top: 14px"
+              ></div>
+            </section>
+          </div>
+          <section class="panel pad">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0">
+              <h2>自动迭代进度</h2>
+              <span class="pill" id="iterationSummary">未运行</span>
+            </div>
+            <div class="progress-wrap">
+              <div class="progress-label">
+                <span id="iterationJobTitle">等待启动</span
+                ><span id="iterationJobPct">0%</span>
+              </div>
+              <div class="progress"><span id="iterationJobBar"></span></div>
+              <div
+                class="step-grid"
+                id="iterationStageFlow"
+                style="margin-top: 12px"
+              ></div>
+              <pre class="console" id="iterationConsole">等待自动迭代</pre>
+            </div>
+            <div class="scroll" style="margin-top: 14px">
+              <table>
+                <thead>
+                  <tr>
+                    <th>轮次</th>
+                    <th>父代</th>
+                    <th>子代</th>
+                    <th>状态</th>
+                    <th>Prompt</th>
+                    <th>目标文件</th>
+                  </tr>
+                </thead>
+                <tbody id="iterationRows"></tbody>
+              </table>
+            </div>
+            <div class="editor-title" style="margin-top: 14px">
+              <div>
+                <h3 id="iterationPreviewTitle">迭代 Prompt/协议预览</h3>
+                <div class="muted">
+                  点击本页表格中的查看按钮后，内容会显示在这里，不再跳转到
+                  Prompt 与 AI 页。
+                </div>
+              </div>
+            </div>
+            <div id="iterationPreview" class="preview-pane">
+              等待查看迭代产物
+            </div>
+          </section>
+        </section>
+
+        <section id="view-outputs" class="view">
+          <div class="guide">
+            <b>本页说明：</b>Outputs 页直接展示 `course_project/outputs`
+            下的全部可预览产物，包括
+            dashboard、CSV、JSON、Markdown、日志等。点击“预览”会在右侧直接显示，不需要去文件夹里找。
+          </div>
+          <div class="artifact-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>outputs 产物</h2>
+                <span class="pill" id="outputCount">0</span>
+              </div>
+              <div class="scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>运行目录</th>
+                      <th>文件</th>
+                      <th>类型/大小</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="outputRows"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel pad">
+              <div
+                class="panel-head"
+                style="padding: 0 0 12px; border-bottom: 0"
+              >
+                <h2 id="outputPreviewTitle">产物预览</h2>
+                <span class="pill">outputs</span>
+              </div>
+              <div id="outputPreview"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-experiments" class="view">
+          <div class="guide">
+            <b>本页说明：</b>Experiments
+            页用于生成课程报告图表和敏感度/鲁棒性数据。这里的
+            <b>Task.py</b> 是场景数据生成器，负责模拟标签集合和真实分布；<b
+              >任务画像</b
+            >
+            才决定本次要验证众数、均值、方差、分位数、基数估计还是缺失盘点。因此一个场景可以复用同一份
+            Task.py 做多种画像测试，验证沙箱会按画像切换目标值计算。
+            <div class="help-list">
+              <div>
+                <b>协议下拉选择：</b>先选场景，再从该场景的 generation
+                协议中选择一个协议，不需要手写 `g8_3:multi_mode`。
+              </div>
+              <div>
+                <b>运行鲁棒性实验：</b
+                >调用原项目敏感度脚本，评估协议在支配度、规模、密度变化下的执行耗时并生成
+                CSV。
+              </div>
+              <div>
+                <b>任务画像：</b
+                >用于报告归档和说明本次实验语义；多画像正确性验证在“验证沙箱”和“自动迭代”页执行。
+              </div>
+              <div>
+                <b>生成图表：</b>鲁棒性图来自敏感度 CSV，进化图来自 evolution
+                JSON，终稿图调用原项目汇总绘图脚本。
+              </div>
+            </div>
+          </div>
+          <div class="grid-2">
+            <section class="panel pad">
+              <h2>鲁棒性/敏感度实验</h2>
+              <div class="form-grid" style="margin-top: 12px">
+                <div>
+                  <label>协议来源场景</label
+                  ><select id="expScene"></select>
+                </div>
+                <div>
+                  <label>协议</label
+                  ><select id="expProtocol"></select>
+                </div>
+                <div>
+                  <label>任务画像</label
+                  ><select id="expTaskProfile"></select>
+                </div>
+                <div>
+                  <label>实验因素</label
+                  ><select id="expFactors" class="compact" multiple></select>
+                </div>
+                <div>
+                  <label>标签数</label
+                  ><input id="expNumTags" type="number" value="60" />
+                </div>
+                <div>
+                  <label>重复次数</label
+                  ><input id="expTotalRuns" type="number" value="2" />
+                </div>
+                <div>
+                  <label>采样点数</label
+                  ><input id="expPointCount" type="number" value="3" />
+                </div>
+                <div>
+                  <label>输出 CSV</label
+                  ><input
+                    id="expOutput"
+                    value="Experiments/sensitivity_results_web.csv"
+                  />
+                </div>
+                <div class="field-span">
+                  <label>实际传入脚本的协议标识</label
+                  ><input id="expProtocolSpec" readonly value="" />
+                </div>
+              </div>
+              <div class="mini-note" id="expTaskExplain">
+                选择任务画像后，这里会说明它和 Task.py、验证沙箱之间的关系。
+              </div>
+              <div class="actions">
+                <button class="btn teal" id="runRobustExp" type="button">
+                  运行鲁棒性实验</button
+                ><button class="btn secondary" id="plotRobust" type="button">
+                  生成鲁棒性图
+                </button>
+              </div>
+            </section>
+            <section class="panel pad">
+              <h2>进化/终稿图</h2>
+              <div class="form-grid" style="margin-top: 12px">
+                <div>
+                  <label>进化数据</label
+                  ><input
+                    id="evoData"
+                    value="Experiments/evolution_data_combined.json"
+                  />
+                </div>
+                <div>
+                  <label>进化场景</label
+                  ><select id="evoScenario"></select>
+                </div>
+                <div>
+                  <label>图表类型</label
+                  ><select id="evoCharts" class="compact" multiple></select>
+                </div>
+                <div>
+                  <label>输出目录</label
+                  ><input id="evoOutputDir" value="Experiments" />
+                </div>
+              </div>
+              <div class="mini-note">
+                选择 single_peak/multi_peak 时读取历史 evolution JSON；选择
+                new、multi_mode 等真实项目场景时，后端会扫描该场景的 generation*
+                协议，先生成场景进化数据，再绘制进化图。终稿图会围绕左侧选中的协议来源场景做最终对比。
+              </div>
+              <div class="actions">
+                <button class="btn blue" id="plotEvolution" type="button">
+                  生成进化图</button
+                ><button class="btn secondary" id="plotFinal" type="button">
+                  生成终稿图
+                </button>
+              </div>
+            </section>
+          </div>
+          <div class="artifact-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>实验产物</h2>
+                <span class="pill" id="artifactCount">0</span>
+              </div>
+              <div class="scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>文件</th>
+                      <th>类型</th>
+                      <th>大小</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="artifactRows"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel pad">
+              <div
+                class="panel-head"
+                style="padding: 0 0 12px; border-bottom: 0"
+              >
+                <h2 id="experimentPreviewTitle">实验产物预览</h2>
+                <span class="pill">本页内查看</span>
+              </div>
+              <div id="experimentPreview">
+                <div class="mini-note">
+                  运行实验或点击产物表中的“本页预览”后，CSV、PDF、PNG、JSON
+                  会直接显示在这里，不再跳到 Outputs 页。
+                </div>
+              </div>
+            </section>
+          </div>
+          <section class="panel pad">
+            <h2>实验控制台</h2>
+            <pre class="console" id="expConsole">等待实验任务</pre>
+          </section>
+        </section>
+
+        <section id="view-audit" class="view">
+          <div class="guide">
+            <b>本页说明：</b>审计页展示运行记录、AI
+            任务、模型配置和数据库计数。这里用于回答“模型是否配置成功”“最近真实生成是否完成”“结果是否被记录”。
+          </div>
+          <div class="grid-4" id="auditMetrics"></div>
+          <section class="panel pad">
+            <h2>大模型运行环境</h2>
+            <div
+              class="tag-list"
+              id="runtimeTags"
+              style="margin-top: 12px"
+            ></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>AI 任务记录</h2>
+              <span class="pill" id="aiJobCount">0</span>
+            </div>
+            <div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>时间</th>
+                    <th>场景</th>
+                    <th>父代</th>
+                    <th>协议</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody id="aiJobRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+    <script src="/static/asset_ui.js" defer></script>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
