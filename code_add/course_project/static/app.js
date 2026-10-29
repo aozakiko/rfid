@@ -1691,8 +1691,8 @@ function bind() {
     });
     $("reloadStatistics").onclick = loadStatistics;
     $("openStatisticsMain").onclick = () => {
-      const first = state.statistics?.modes?.main?.artifacts?.[0];
-      if (first) renderAssetPreview(first.path, "statisticsAssetPreview");
+      const chart = (state.statistics?.modes?.main?.artifacts || []).find((item) => item.name === "communication_error.png");
+      if (chart) renderAssetPreview(chart.path, "statisticsAssetPreview");
     };
   }
 }
