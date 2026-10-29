@@ -411,22 +411,22 @@
                     <label>目标世代</label
                     ><input id="aiTargetGeneration" value="next" />
                   </div>
-                  <div><label>Base URL</label><input id="aiBaseUrl" /></div>
-                  <div><label>模型名</label><input id="aiModel" /></div>
                   <div>
-                    <label>Endpoint Path</label
-                    ><input id="aiEndpoint" value="/v1/chat/completions" />
+                    <label>API URL</label
+                    ><input id="aiBaseUrl" type="url" value="https://ai-pixel.online/v1" placeholder="https://你的中转站/v1" autocomplete="off" />
                   </div>
                   <div>
-                    <label>API Key 环境变量</label
-                    ><input id="aiKeyEnv" value="GEEK_API_KEY" />
+                    <label>模型名</label
+                    ><input id="aiModel" value="gpt-6.1-sol" placeholder="填写中转站支持的模型名" />
                   </div>
                   <div>
-                    <label>临时 API Key</label
+                    <label>API Key</label
                     ><input
                       id="aiApiKey"
                       type="password"
-                      placeholder="可留空，使用环境变量"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder="填写当前中转站的 API Key"
                     />
                   </div>
                   <div>
@@ -454,6 +454,9 @@
                       value="0.2"
                     />
                   </div>
+                </div>
+                <div class="mini-note" style="margin-top: 12px">
+                  修改 URL 或 API Key 后，下次请求立即使用新配置，无需重启服务。接口自动识别；密钥仅在当前页面使用，刷新后需重新填写。自动迭代共用此处配置。
                 </div>
                 <div class="actions">
                   <button class="btn secondary" id="probeModel" type="button">

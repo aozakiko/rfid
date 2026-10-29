@@ -329,17 +329,18 @@ def run_ai_optimization_workflow(
     parent_b: str,
     protocol_name: str,
     target_generation: str,
-    base_url: str | None,
-    model: str | None,
-    endpoint_path: str | None,
-    api_key_env: str,
-    api_key_value: str | None,
+    base_url: str | None = None,
+    model: str | None = None,
+    endpoint_path: str | None = None,
+    api_key_env: str | None = None,
+    api_key_value: str | None = None,
     temperature: float,
     max_tokens: int,
     timeout_seconds: int,
     validate_num_tags: int,
     max_repair_rounds: int,
     dry_run: bool,
+    llm_config: LLMConfig | None = None,
     retry_attempts: int = 3,
     task_profile: str = "mode_query",
     requirement_text: str | None = None,
@@ -376,7 +377,7 @@ def run_ai_optimization_workflow(
             "artifact_note": "预览任务只生成 Prompt，不调用模型，也不会创建协议文件。",
         }
 
-    config = LLMConfig.from_sources(
+    config = llm_config or LLMConfig.from_sources(
         base_url=base_url,
         model=model,
         endpoint_path=endpoint_path,
@@ -388,7 +389,7 @@ def run_ai_optimization_workflow(
         retry_attempts=retry_attempts,
     )
     client = OpenAICompatibleClient(config)
-    _log(f"模型配置已解析: {config.model} @ {config.base_url}{config.endpoint_path}", logger)
+    _log(f"模型配置已解析: {config.model} @ {config.base_url}（{'自动识别接口' if config.endpoint_path == 'auto' else config.endpoint_path}）", logger)
 
     system_prompt = (
         "你是一个严格的 Python 协议生成器。"

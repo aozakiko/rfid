@@ -71,11 +71,11 @@ Web 页面、样式和交互分别位于 `static/index.html`、`static/app.css`�
 
 ## 大模型接入
 
-平台复用 `backend_tools/openai_compatible.py`，支持 OpenAI 兼容接口。可通过环境变量或 Web 页面临时配置：
+平台复用 `backend_tools/openai_compatible.py`，支持 OpenAI 兼容接口。Web 页面直接填写 API URL、API Key 和模型名，不读取模型环境变量，不需要填写接口路径。
 
-- `AI_API_BASE_URL` / `OPENAI_BASE_URL` / `GEEK_API_BASE_URL`
-- `AI_API_MODEL` / `OPENAI_MODEL` / `GEEK_API_MODEL`
-- `AI_API_KEY` / `OPENAI_API_KEY` / `GEEK_API_KEY`
+每次模型检查、真实生成和自动迭代都只使用当前提交的页面配置，修改后下一次请求立即生效，无需重启。接口自动尝试 Responses，遇到不支持该接口的响应时切换到 Chat Completions；鉴权失败、限流或网络故障不会触发接口切换。成功识别的接口在本次工作流的后续调用中复用。
+
+API Key 仅随请求提交，后台任务公开快照会剔除密钥，密钥不会保存在配置文件或浏览器本地存储；刷新页面后重新填写。预览任务不要求模型配置。
 
 页面中的“预览生成任务”只生成 Prompt 与目标路径，不调用模型，也不会创建 `.py` 协议文件；“生成协议代码”会真实访问模型网关，写入 `.py` 子代协议，并执行验证/自修复流程。AI 生成和自动迭代均走后台任务接口，浏览器每秒轮询进度，显示排队、校验、连接模型、生成、验证、落盘和完成状态。网络层对 429/5xx、连接重置、超时等异常进行重试。
 

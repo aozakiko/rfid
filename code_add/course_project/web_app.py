@@ -17,14 +17,14 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ai_protocol_optimizer import TASK_GUIDANCE, run_ai_optimization_workflow
-from backend_tools.openai_compatible import LLMConfig, OpenAICompatibleClient
+from backend_tools.openai_compatible import LLMClientError, LLMConfig, OpenAICompatibleClient
 from prompt_generation import create_crossover_prompts
 from Validator import ProtocolValidator
 from course_project.database import (
@@ -51,6 +51,43 @@ STATIC_ROOT = COURSE_ROOT / "static"
 STATIC_FILES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8"}
 STATIC_FILES.update({"asset_ui.js": "text/javascript; charset=utf-8", "assets.css": "text/css; charset=utf-8"})
 FILE_WRITE_LOCK = threading.Lock()
+
+
+def _web_llm_config(payload: dict[str, Any], *, probe: bool = False) -> LLMConfig:
+    """Resolve each Web request exclusively from the submitted form."""
+    def text_value(name: str, label: str, *, optional: bool = False) -> str:
+        value = payload.get(name)
+        if optional and (value is None or isinstance(value, str) and not value.strip()):
+            return ""
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"请在模型配置中填写{label}。")
+        return value.strip()
+
+    base_url = text_value("base_url", " URL").rstrip("/")
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("URL 必须是有效的 http 或 https 地址。")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("请填写不含账号、密钥、查询参数或片段的 API 基础 URL。")
+    # Accept either the gateway base URL or a copied complete API URL.
+    for suffix in ("/chat/completions", "/responses"):
+        if base_url.endswith(suffix):
+            base_url = base_url[:-len(suffix)].rstrip("/")
+            break
+    model = text_value("model", "模型名", optional=probe and payload.get("mode") == "list")
+    api_key = text_value("api_key_value" if "api_key_value" in payload else "api_key", " API Key")
+    if any(character.isspace() for character in api_key):
+        raise ValueError("API Key 中不能包含空格或换行。")
+    return LLMConfig(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        endpoint_path="auto",
+        temperature=0.0 if probe else bounded_float(payload, "temperature", 0.2, 0.0, 2.0),
+        max_tokens=_coerce_int(payload, "max_tokens", 64 if probe else 2800, 16 if probe else 256, 512 if probe else 32000),
+        timeout_seconds=_coerce_int(payload, "timeout_seconds", 60 if probe else 120, 10 if probe else 20, 300 if probe else 3600),
+        retry_attempts=_coerce_int(payload, "retry_attempts", 3, 1, 6),
+    )
 
 
 def discover_scenes() -> list[str]:
@@ -399,13 +436,8 @@ def selfopt_state() -> dict[str, Any]:
         },
         "output_artifacts": _output_artifact_rows(),
         "ai_runtime": {
-            "base_url_configured": bool(os.getenv("AI_API_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("GEEK_API_BASE_URL")),
-            "default_base_url": os.getenv("AI_API_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("GEEK_API_BASE_URL") or "https://geekspace.cloud",
-            "model_configured": bool(os.getenv("AI_API_MODEL") or os.getenv("OPENAI_MODEL") or os.getenv("GEEK_API_MODEL")),
-            "default_model": os.getenv("AI_API_MODEL") or os.getenv("OPENAI_MODEL") or os.getenv("GEEK_API_MODEL") or "gpt-4o-mini",
-            "default_endpoint_path": os.getenv("AI_API_ENDPOINT_PATH") or "/v1/chat/completions",
-            "api_key_configured": bool(os.getenv("AI_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("GEEK_API_KEY")),
-            "default_api_key_env": "GEEK_API_KEY",
+            "configuration_mode": "page",
+            "interface_mode": "auto",
         },
         "ai_jobs": db.get("ai_jobs", [])[:20],
         "database_counts": db.get("counts", {}),
@@ -420,6 +452,9 @@ def start_background_task(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     workflows = {"ai_generation": run_ai_generation, "auto_iterate": run_selfopt_auto_iterate}
     if kind not in workflows:
         raise ValueError(f"Unknown background task: {kind}")
+    preview = boolean_value(payload, "dry_run", kind == "auto_iterate") or payload.get("run_mode") == "preview"
+    if not preview:
+        _web_llm_config(payload)
 
     def work(update):
         return workflows[kind](
@@ -781,6 +816,7 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
     dry_run = run_mode == "preview" or boolean_value(payload, "dry_run", False)
     requirement_text = str(payload.get("requirement_text") or "")
     retry_attempts = _coerce_int(payload, "retry_attempts", 3, 1, 6)
+    llm_config = None if dry_run else _web_llm_config(payload)
 
     available = set(catalog["protocols"].get(scene, []))
     for parent in (parent_a, parent_b):
@@ -823,11 +859,7 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
         parent_b=parent_b,
         protocol_name=protocol_name,
         target_generation=target_generation,
-        base_url=payload.get("base_url"),
-        model=payload.get("model"),
-        endpoint_path=payload.get("endpoint_path"),
-        api_key_env=str(payload.get("api_key_env") or "GEEK_API_KEY"),
-        api_key_value=payload.get("api_key_value") or payload.get("api_key") or None,
+        llm_config=llm_config,
         temperature=bounded_float(payload, "temperature", 0.2, 0.0, 2.0),
         max_tokens=_coerce_int(payload, "max_tokens", 2800, 256, 32000),
         timeout_seconds=_coerce_int(payload, "timeout_seconds", 120, 20, 3600),
@@ -861,23 +893,19 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
 
 
 def probe_ai_runtime(payload: dict[str, Any]) -> dict[str, Any]:
-    api_key_value = payload.get("api_key_value") or payload.get("api_key") or None
-    config = LLMConfig.from_sources(
-        base_url=payload.get("base_url"),
-        model=payload.get("model") or os.getenv("AI_API_MODEL") or os.getenv("OPENAI_MODEL") or os.getenv("GEEK_API_MODEL") or "gpt-4o-mini",
-        endpoint_path=payload.get("endpoint_path"),
-        api_key=api_key_value,
-        api_key_env=str(payload.get("api_key_env") or "GEEK_API_KEY"),
-        temperature=0.0,
-        max_tokens=_coerce_int(payload, "max_tokens", 64, 16, 512),
-        timeout_seconds=_coerce_int(payload, "timeout_seconds", 60, 10, 300),
-    )
+    config = _web_llm_config(payload, probe=True)
     client = OpenAICompatibleClient(config)
     mode = str(payload.get("mode") or "probe")
-    if mode == "list":
-        return {"mode": "list", "models": client.list_models(), "base_url": config.base_url}
-    text = client.generate_text(system_prompt="You are a health check endpoint.", user_prompt="Reply with exactly OK.")
-    return {"mode": "probe", "reply": text.strip(), "model": config.model, "base_url": config.base_url}
+    if mode not in {"list", "probe"}:
+        raise ValueError("模型检查模式必须是 list 或 probe。")
+    try:
+        if mode == "list":
+            return {"mode": "list", "models": client.list_models(), "base_url": config.base_url}
+        text = client.generate_text(system_prompt="You are a health check endpoint.", user_prompt="Reply with exactly OK.")
+    except LLMClientError as exc:
+        raise APIError(str(exc), HTTPStatus.BAD_GATEWAY) from exc
+    protocol = "Responses" if client.resolved_endpoint == "/v1/responses" else "Chat Completions"
+    return {"mode": "probe", "reply": text.strip(), "model": config.model, "base_url": config.base_url, "protocol": protocol}
 
 
 def _parse_batch_results(stdout: str) -> list[dict[str, Any]]:
@@ -990,6 +1018,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
     prefix = _default_iteration_prefix_for_task(payload.get("prefix") or "web_auto_iter", task_profile)
     iterations = _coerce_int(payload, "iterations", 3, 1, 12)
     dry_run = boolean_value(payload, "dry_run", True)
+    llm_config = None if dry_run else _web_llm_config(payload)
     max_repair_rounds = _coerce_int(payload, "max_repair_rounds", 0 if dry_run else 1, 0, 5)
     validate_num_tags = _coerce_int(payload, "validate_num_tags", 80, 20, 5000)
     retry_attempts = _coerce_int(payload, "retry_attempts", 3, 1, 6)
@@ -1053,11 +1082,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             parent_b=parent_b,
             protocol_name=protocol_name,
             target_generation=target_generation,
-            base_url=payload.get("base_url"),
-            model=payload.get("model"),
-            endpoint_path=payload.get("endpoint_path"),
-            api_key_env=str(payload.get("api_key_env") or "GEEK_API_KEY"),
-            api_key_value=payload.get("api_key_value") or payload.get("api_key"),
+            llm_config=llm_config,
             temperature=bounded_float(payload, "temperature", 0.2, 0.0, 2.0),
             max_tokens=_coerce_int(payload, "max_tokens", 2800, 256, 16000),
             timeout_seconds=_coerce_int(payload, "timeout_seconds", 120, 20, 1800),

@@ -74,16 +74,11 @@ python -m course_project.web_app --host 127.0.0.1 --port 8765
 4. **生成协议代码**：实际调用配置的模型，生成代码并执行验证/自修复流程。
 5. 下方查看后台任务进度、日志和历史记录；任务结束后会展示本次生成的 Prompt 或协议。
 
-模型配置可以在页面填写，也可以在启动服务前设置环境变量：
+模型配置直接在页面填写 **API URL、API Key 和模型名**。例如使用 Pixel 时，URL 为 `https://ai-pixel.online/v1`，模型名填写该中转站支持的模型（当前示例为 `gpt-6.1-sol`），API Key 填写对应密钥。
 
-```powershell
-$env:AI_API_BASE_URL = "https://your-model-gateway.example"
-$env:AI_API_MODEL = "your-model-name"
-$env:AI_API_KEY = "your-api-key"
-python -m course_project.web_app --host 127.0.0.1 --port 8765
-```
+点击“检查模型是否可用”验证连接，或点击“列出可用模型”查看支持的模型名称。系统自动识别 Responses / Chat Completions 接口，无需填写 Endpoint Path 或设置环境变量。修改 URL、Key 或模型名后，下一次模型检查、生成或自动迭代立即使用新配置，无需重启服务；已提交的任务继续使用提交时的配置。
 
-以上是占位示例，需替换成实际服务参数。默认 Endpoint Path 为 `/v1/chat/completions`；API Key 环境变量字段应与所使用的变量名一致，例如 `AI_API_KEY`。密钥只填写在本机环境或临时输入框，不写入 Git 文档和代码。
+API Key 仅在当前页面使用，不写入浏览器本地存储、配置文件或任务历史，刷新页面后需重新填写。自动迭代共用“Prompt 与 AI”页中的模型配置；预览生成和预览迭代不需要密钥，也不会调用模型。
 
 ### 3.4 验证沙箱
 
@@ -228,4 +223,8 @@ rfid/
 python -m unittest course_project.test_infrastructure course_project.test_course_project
 ```
 
-使用上述虚拟环境时，将 `python` 替换为 `..\.venv\Scripts\python.exe`。本次 21 项测试通过，覆盖上传、预览分页、下载、文件冲突、参数验证、后台队列和核心工作流；浏览器检查还覆盖 8 个页面、5 种窗口宽度。
+使用上述虚拟环境时，将 `python` 替换为 `..\.venv\Scripts\python.exe`。测试覆盖上传、预览分页、下载、文件冲突、参数验证、后台队列和核心工作流。模型配置与接口自动识别检查见下方命令；测试使用本地模拟网关，不会调用付费模型。
+
+```powershell
+python -m unittest course_project.test_ai_configuration
+```

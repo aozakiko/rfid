@@ -4,13 +4,17 @@ import json
 import os
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib import error, request
 
 
 class LLMClientError(RuntimeError):
     """OpenAI 兼容接口调用失败。"""
+
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _first_non_empty(*values: str | None) -> str | None:
@@ -30,7 +34,7 @@ def _normalize_base_url(base_url: str) -> str:
 @dataclass(frozen=True)
 class LLMConfig:
     base_url: str
-    api_key: str
+    api_key: str = field(repr=False)
     model: str
     endpoint_path: str = "/v1/chat/completions"
     temperature: float = 0.2
@@ -105,6 +109,7 @@ class LLMConfig:
 class OpenAICompatibleClient:
     def __init__(self, config: LLMConfig):
         self.config = config
+        self.resolved_endpoint: str | None = None
 
     def list_models(self) -> list[str]:
         response_data = self._request_json("GET", "/v1/models")
@@ -116,16 +121,29 @@ class OpenAICompatibleClient:
         return results
 
     def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:
-        endpoint = self.config.endpoint_path
-        if endpoint == "/v1/responses":
-            return self._call_responses(system_prompt, user_prompt)
-
-        try:
-            return self._call_chat_completions(system_prompt, user_prompt)
-        except LLMClientError:
-            if endpoint == "/v1/chat/completions":
-                return self._call_responses(system_prompt, user_prompt)
-            raise
+        endpoint = self.resolved_endpoint or self.config.endpoint_path
+        if endpoint == "auto":
+            endpoints = ["/v1/responses", "/v1/chat/completions"]
+        elif endpoint == "/v1/chat/completions":
+            endpoints = [endpoint, "/v1/responses"]
+        else:
+            endpoints = [endpoint]
+        for index, candidate in enumerate(endpoints):
+            try:
+                if candidate == "/v1/responses":
+                    text = self._call_responses(system_prompt, user_prompt)
+                else:
+                    text = self._call_chat_completions(system_prompt, user_prompt)
+            except LLMClientError as exc:
+                # Authentication, quota, timeouts and server failures are not
+                # evidence of a different API protocol. Do not retry them on
+                # another endpoint and accidentally duplicate a generation.
+                if index + 1 == len(endpoints) or exc.status_code not in {400, 404, 405, 415, 422, 501}:
+                    raise
+            else:
+                self.resolved_endpoint = candidate
+                return text
+        raise LLMClientError("无法识别中转站支持的接口。")
 
     def _call_chat_completions(self, system_prompt: str, user_prompt: str) -> str:
         payload = {
@@ -203,9 +221,9 @@ class OpenAICompatibleClient:
                     raw_body = resp.read().decode("utf-8")
                 break
             except error.HTTPError as exc:
-                err_body = exc.read().decode("utf-8", errors="replace")
+                err_body = exc.read().decode("utf-8", errors="replace").replace(self.config.api_key, "[redacted]")
                 should_retry = self._should_retry_http_error(exc.code, err_body, attempt)
-                last_error = LLMClientError(f"HTTP {exc.code} 调用失败，已尝试 {attempt}/{self.config.retry_attempts}: {err_body}")
+                last_error = LLMClientError(f"HTTP {exc.code} 调用失败，已尝试 {attempt}/{self.config.retry_attempts}: {err_body}", status_code=exc.code)
                 if should_retry:
                     time.sleep(self.config.retry_delay_seconds * attempt)
                     continue

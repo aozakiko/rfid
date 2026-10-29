@@ -21,6 +21,8 @@ const state = {
   lastExperiment: null,
   pollers: {},
   activeJobs: {},
+  aiConfigVersion: 0,
+  aiConnection: null,
 };
 const navItems = [
   ["overview", "总览", "M4 13h6V5H4z M14 19h6V5h-6z M4 19h6v-4H4z"],
@@ -67,6 +69,7 @@ const manuals = {
   ],
   ai: [
     "Prompt 与 AI 页用于单次协议生成。这里只处理父代 A/B 这一组交叉，不再放父代池。",
+    "填写中转站 URL、API Key 和模型名即可使用，接口自动识别。修改配置后下次请求立即生效，无需重启；自动迭代使用同一套配置。密钥仅在当前页面使用，刷新后重新填写。",
     "按钮说明：检查模型是否可用会发起最小 OK 探测；列出可用模型会读取 /v1/models；预览生成任务只生成 Prompt 和目标路径，不生成协议文件；生成协议代码会后台调用模型并实时显示进度。",
     "任务画像会进入 Prompt、默认文件名和验证口径。例如均值画像默认生成 web_mean_estimation_candidate.py。",
   ],
@@ -290,8 +293,6 @@ function llmPayload() {
   return {
     base_url: $("aiBaseUrl").value.trim(),
     model: $("aiModel").value.trim(),
-    endpoint_path: $("aiEndpoint").value.trim(),
-    api_key_env: $("aiKeyEnv").value.trim() || "GEEK_API_KEY",
     api_key_value: $("aiApiKey").value.trim() || null,
     temperature: Number($("aiTemperature").value || 0.2),
     max_tokens: Number($("aiMaxTokens").value || 3600),
@@ -439,39 +440,29 @@ function fillExperimentControls() {
   );
   updateExperimentProtocolSpec();
 }
-function applyRuntimeDefaults() {
-  const rt = state.selfopt?.ai_runtime || {};
-  if (!$("aiBaseUrl").value)
-    $("aiBaseUrl").value = rt.default_base_url || "https://geekspace.cloud";
-  if (!$("aiModel").value)
-    $("aiModel").value = rt.default_model || "gpt-4o-mini";
-  if (!$("aiEndpoint").value)
-    $("aiEndpoint").value = rt.default_endpoint_path || "/v1/chat/completions";
-}
 function renderAiRuntime() {
-  const rt = state.selfopt?.ai_runtime || {};
   const jobs = state.selfopt?.ai_jobs || [];
   const latestReal = jobs.find((j) => !Number(j.dry_run));
-  const ok =
-    rt.base_url_configured && rt.model_configured && rt.api_key_configured;
-  $("aiRuntimeSummary").textContent = ok
-    ? `大模型环境已配置：${rt.default_model || $("aiModel").value} @ ${rt.default_base_url || $("aiBaseUrl").value}。最近真实生成：${latestReal ? `#${latestReal.id} ${latestReal.protocol_name} (${latestReal.status})` : "暂无真实生成记录"}`
-    : "大模型环境未完全配置；可填写临时 API Key 后点击“检查模型是否可用”。";
+  const config = llmPayload();
+  const ready = Boolean(config.base_url && config.model && config.api_key_value);
+  $("aiRuntimeSummary").textContent = state.aiConnection?.message || (ready
+    ? "配置已填写，将随下次请求立即生效。可点击“检查模型是否可用”验证连接。"
+    : "请填写 URL、API Key 和模型名，接口将自动识别，无需重启服务。");
   $("aiRuntimeMetrics").innerHTML = [
     [
-      "Base URL",
-      rt.base_url_configured ? "已配置" : "未配置",
-      rt.base_url_configured ? "tone-green" : "tone-red",
+      "API URL",
+      config.base_url ? "已填写" : "未填写",
+      config.base_url ? "tone-green" : "tone-amber",
     ],
     [
       "模型",
-      rt.model_configured ? rt.default_model || "已配置" : "未配置",
-      rt.model_configured ? "tone-green" : "tone-red",
+      config.model || "未填写",
+      config.model ? "tone-green" : "tone-amber",
     ],
     [
       "API Key",
-      rt.api_key_configured ? "已配置" : "未配置",
-      rt.api_key_configured ? "tone-green" : "tone-red",
+      config.api_key_value ? "已填写" : "未填写",
+      config.api_key_value ? "tone-green" : "tone-amber",
     ],
     [
       "最近真实任务",
@@ -964,25 +955,44 @@ async function runAi(mode) {
   }
 }
 async function probeModel(mode) {
+  const version = state.aiConfigVersion;
+  ["probeModel", "listModels"].forEach((id) => ($(id).disabled = true));
   setStatus(mode === "list" ? "列出模型" : "检查模型", "busy");
   try {
     const d = await api("/api/selfopt/ai-models", {
       method: "POST",
       body: JSON.stringify({ mode, ...llmPayload(), max_tokens: 64 }),
     });
+    if (version !== state.aiConfigVersion) {
+      setStatus("配置已修改，请检查新配置");
+      return;
+    }
     $("aiOutput").textContent =
       mode === "list"
         ? `可用模型：\n${(d.models || []).slice(0, 80).join("\n")}`
         : JSON.stringify(d, null, 2);
-    $("aiRuntimeSummary").textContent =
-      mode === "list"
-        ? `模型列表读取成功，共 ${(d.models || []).length} 个模型。`
-        : `模型探测成功：${d.model} 返回 ${d.reply || "OK"}。`;
+    state.aiConnection = {
+      status: mode === "list" ? "listed" : "success",
+      message: mode === "list"
+        ? `模型列表读取成功，共 ${(d.models || []).length} 个模型；选择支持的模型后可检查连接。`
+        : `模型探测成功：${d.model} 返回 ${d.reply || "OK"}，已自动识别 ${d.protocol} 接口。`,
+      protocol: d.protocol,
+    };
+    renderAiRuntime();
+    renderAudit();
     setStatus("模型接口正常");
   } catch (e) {
+    if (version !== state.aiConfigVersion) {
+      setStatus("配置已修改，请检查新配置");
+      return;
+    }
     setStatus(e.message, "error");
-    $("aiRuntimeSummary").textContent = `模型探测失败：${e.message}`;
+    state.aiConnection = { status: "failed", message: `模型探测失败：${e.message}` };
+    renderAiRuntime();
+    renderAudit();
     $("aiOutput").textContent = e.message;
+  } finally {
+    ["probeModel", "listModels"].forEach((id) => ($(id).disabled = false));
   }
 }
 function renderPrompts() {
@@ -1321,16 +1331,16 @@ function renderAudit() {
         `<div class="metric ${tone(i)}"><span>${esc(k)}</span><strong>${esc(counts[k] || 0)}</strong></div>`,
     )
     .join("");
-  const rt = state.selfopt?.ai_runtime || {};
+  const config = llmPayload();
   $("runtimeTags").innerHTML = [
-    ["Base URL", rt.base_url_configured ? rt.default_base_url : false],
-    ["Model", rt.model_configured ? rt.default_model : false],
-    ["API Key", rt.api_key_configured],
-    ["Endpoint", rt.default_endpoint_path || "/v1/chat/completions"],
+    ["API URL", config.base_url || false],
+    ["模型", config.model || false],
+    ["API Key", Boolean(config.api_key_value)],
+    ["连接", state.aiConnection?.status === "success" ? `已验证 · ${state.aiConnection.protocol}` : "待验证"],
   ]
     .map(
       ([k, v]) =>
-        `<span class="pill ${v === false ? "amber" : "green"}">${esc(k)}：${esc(v === true ? "已配置" : v === false ? "未配置" : v)}</span>`,
+        `<span class="pill ${v === false || v === "待验证" ? "amber" : "green"}">${esc(k)}：${esc(v === true ? "已填写" : v === false ? "未填写" : v)}</span>`,
     )
     .join("");
   const jobs = state.selfopt?.ai_jobs || [];
@@ -1350,7 +1360,6 @@ function renderAll() {
   fillTaskProfiles();
   fillProtocolControls();
   fillExperimentControls();
-  applyRuntimeDefaults();
   renderAiRuntime();
   renderOverview();
   renderAssets();
@@ -1494,6 +1503,14 @@ function bind() {
   $("runAi").onclick = () => runAi("generate");
   $("probeModel").onclick = () => probeModel("probe");
   $("listModels").onclick = () => probeModel("list");
+  ["aiBaseUrl", "aiModel", "aiApiKey"].forEach((id) => {
+    $(id).oninput = () => {
+      state.aiConfigVersion += 1;
+      state.aiConnection = null;
+      renderAiRuntime();
+      renderAudit();
+    };
+  });
   $("runValidate").onclick = runValidate;
   $("runIteration").onclick = runIteration;
   $("useTopIterParents").onclick = fillRecommendedParents;
