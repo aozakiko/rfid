@@ -365,6 +365,116 @@ def _output_artifact_rows(*, limit: int | None = None) -> list[dict[str, Any]]:
     return rows[:limit]
 
 
+def _statistical_benchmark_state() -> dict[str, Any]:
+    """Return a small, page-ready view of Liu Tengfei's benchmark evidence.
+
+    The raw JSON remains downloadable/previewable through the existing asset
+    API.  This endpoint only extracts the dimensions and metrics needed by the
+    dashboard so the page can filter by task, distribution, scale and mode
+    without making the browser parse the full report files itself.
+    """
+    root = PROJECT_ROOT / "Experiments" / "stat_protocols"
+    modes: dict[str, Any] = {}
+    all_rows: list[dict[str, Any]] = []
+    for mode in ("main", "ablation"):
+        mode_dir = root / mode
+        report_path = mode_dir / f"{mode}_reports.json"
+        summary_path = mode_dir / f"{mode}_summary.csv"
+        pareto_path = mode_dir / f"{mode}_pareto.json"
+        payload: dict[str, Any] = {}
+        if report_path.exists():
+            try:
+                payload = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+        rows: list[dict[str, Any]] = []
+        for report in payload.get("reports", []):
+            run = report.get("run_result") or {}
+            metadata = run.get("metadata") or {}
+            row = {
+                "protocol": report.get("protocol", ""),
+                "task": report.get("task", ""),
+                "seed": report.get("seed", run.get("seed", 0)),
+                "status": report.get("status", "failed"),
+                "distribution": metadata.get("distribution", ""),
+                "num_tags": metadata.get("num_tags", 0),
+                "reader_bits": run.get("reader_bits", 0),
+                "tag_bits": run.get("tag_bits", 0),
+                "communication_bits": report.get("communication_bits", run.get("communication_bits", 0)),
+                "slots": run.get("slots", 0),
+                "frames": run.get("frames", 0),
+                "rounds": run.get("rounds", 0),
+                "relative_error": report.get("relative_error"),
+                "absolute_error": report.get("absolute_error"),
+                "f1": report.get("f1"),
+                "precision": report.get("precision"),
+                "recall": report.get("recall"),
+                "failure_reason": report.get("failure_reason", ""),
+            }
+            rows.append(row)
+            all_rows.append(row | {"mode": mode})
+        summary: list[dict[str, Any]] = payload.get("summary", [])
+        if not summary and summary_path.exists():
+            try:
+                import csv
+                with summary_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                    summary = list(csv.DictReader(handle))
+            except (OSError, csv.Error):
+                summary = []
+        pareto: list[dict[str, Any]] = []
+        if pareto_path.exists():
+            try:
+                pareto = json.loads(pareto_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pareto = []
+        modes[mode] = {
+            "rows": rows,
+            "summary": summary,
+            "pareto": pareto,
+            "artifacts": [
+                {
+                    "name": path.name,
+                    "path": _relative_to_project(path),
+                    "kind": path.suffix.lower().lstrip("."),
+                    "size": path.stat().st_size,
+                }
+                for path in sorted(mode_dir.glob("*"))
+                if path.is_file() and path.suffix.lower() in {".json", ".csv", ".png", ".pdf"}
+            ],
+        }
+    protocols = sorted({row["protocol"] for row in all_rows if row["protocol"]})
+    tasks = sorted({row["task"] for row in all_rows if row["task"]})
+    distributions = sorted({row["distribution"] for row in all_rows if row["distribution"]})
+    scales = sorted({row["num_tags"] for row in all_rows if row["num_tags"]})
+    seeds = sorted({row["seed"] for row in all_rows})
+    return {
+        "available": bool(all_rows),
+        "root": _relative_to_project(root),
+        "modes": modes,
+        "dimensions": {
+            "protocols": protocols,
+            "tasks": tasks,
+            "distributions": distributions,
+            "scales": scales,
+            "seeds": seeds,
+        },
+        "coverage": [
+            {"key": "mechanisms", "title": "现有 base_protocol/ 与各代协议机制已整理", "status": (PROJECT_ROOT / "stat_protocols" / "README.md").exists(), "evidence": "stat_protocols/README.md · protocols.py"},
+            {"key": "shared_run_result", "title": "统一 RunResult 覆盖 4 个核心统计任务", "status": len(tasks) >= 4, "evidence": "stat_protocols/contracts.py"},
+            {"key": "same_case", "title": "同一分布、seed、规模下对齐协议", "status": len(distributions) >= 4 and len(scales) >= 3 and len(seeds) >= 5, "evidence": "benchmark/runner.py + reports.json"},
+            {"key": "communication", "title": "主指标使用通信量与误差", "status": all("communication_bits" in row for row in all_rows), "evidence": "stat_protocols/contracts.py + communication_error.png"},
+            {"key": "baselines", "title": "Polling / 全识别 / 单任务 / LLM 随机基线", "status": {"polling", "full_identification", "single_mean", "single_variance", "single_cardinality", "single_top_k", "llm_random"}.issubset(set(protocols)), "evidence": "benchmark/experiments.py"},
+            {"key": "negative_results", "title": "失败协议与负结果保留", "status": any(row["status"] == "failed" or row["protocol"] == "llm_random" for row in all_rows), "evidence": "*_reports.json + *_summary.csv"},
+            {"key": "experiments", "title": "主实验、消融实验与 Pareto 结果", "status": all(mode in modes and modes[mode]["rows"] for mode in ("main", "ablation")), "evidence": "Experiments/stat_protocols/"},
+        ],
+        "commands": [
+            "cd code_add",
+            "python -m benchmark.run_benchmark --mode main --seeds 0,1,2,3,4 --sizes 1000,10000,100000 --distributions single_peak,multi_peak,gaussian,long_tail,uniform --output-dir Experiments/stat_protocols/main",
+            "python -m benchmark.run_benchmark --mode ablation --seeds 0,1,2,3,4 --sizes 1000,10000,100000 --distributions single_peak,multi_peak,gaussian,long_tail,uniform --output-dir Experiments/stat_protocols/ablation",
+        ],
+    }
+
+
 def _assert_safe_raw_artifact(path: Path) -> None:
     resolved = path.resolve()
     allowed_roots = [(COURSE_ROOT / "outputs").resolve(), (PROJECT_ROOT / "Experiments").resolve()]
@@ -1525,6 +1635,8 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, selfopt_state())
             elif path == "/api/selfopt/artifacts":
                 json_response(self, {"artifacts": _experiment_artifact_rows(), "outputs": _output_artifact_rows()})
+            elif path == "/api/statistics/benchmark":
+                json_response(self, _statistical_benchmark_state())
             elif path == "/api/selfopt/job":
                 job_id = query.get("id", [""])[0]
                 json_response(self, {"job": get_background_job(job_id)})

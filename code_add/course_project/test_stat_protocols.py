@@ -9,6 +9,7 @@ from benchmark.runner import run_benchmark, summarize_reports
 from benchmark.scenarios import generate_tags
 from stat_protocols.contracts import CostModel, TaskSpec
 from stat_protocols.protocols import PollingProtocol, SharedSketchProtocol
+from course_project.web_app import _statistical_benchmark_state
 
 
 class StatisticalProtocolContractTests(unittest.TestCase):
@@ -52,6 +53,25 @@ class StatisticalProtocolContractTests(unittest.TestCase):
         names = {report.protocol for report in reports}
         self.assertIn("shared_sketch", names)
         self.assertIn("single_mean", names)
+
+    def test_benchmark_rows_keep_fair_comparison_dimensions(self) -> None:
+        reports = run_benchmark(
+            TaskSpec(seed=4, num_tags=33, distribution="long_tail"),
+            seeds=[4],
+            sizes=[33],
+            distributions=["long_tail"],
+            protocol_names=("shared_sketch",),
+        )
+        metadata = reports[0].run_result.metadata
+        self.assertEqual(metadata["distribution"], "long_tail")
+        self.assertEqual(metadata["num_tags"], 33)
+        self.assertEqual(metadata["enabled_tasks"], ["mean", "variance", "cardinality", "top_k"])
+
+    def test_web_benchmark_state_covers_liu_requirements(self) -> None:
+        state = _statistical_benchmark_state()
+        self.assertTrue(state["available"])
+        self.assertEqual(state["dimensions"]["scales"], [1000, 10000, 100000])
+        self.assertTrue(all(item["status"] for item in state["coverage"]))
 
 
 if __name__ == "__main__":

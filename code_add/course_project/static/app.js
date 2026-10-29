@@ -23,6 +23,7 @@ const state = {
   activeJobs: {},
   aiConfigVersion: 0,
   aiConnection: null,
+  statistics: null,
 };
 const navItems = [
   ["overview", "总览", "M4 13h6V5H4z M14 19h6V5h-6z M4 19h6v-4H4z"],
@@ -40,6 +41,7 @@ const navItems = [
   ],
   ["outputs", "实验产物", "M4 6h16 M4 12h16 M4 18h16"],
   ["experiments", "实验分析", "M4 19h16 M8 17V9 M12 17V5 M16 17v-7"],
+  ["statistics", "统计基准", "M4 18L9 12l4 3 7-9 M4 20h16"],
   [
     "audit",
     "审计",
@@ -54,6 +56,7 @@ const pageCopy = {
   iterate: ["自动迭代", "组合父代协议，连续生成、验证并积累新的实验结果。"],
   outputs: ["实验产物", "集中查看场景输出、实验数据与运行报告。"],
   experiments: ["实验分析", "比较协议表现，生成鲁棒性、演化与性能分析图表。"],
+  statistics: ["统计基准", "查看刘滕飞负责的统计协议、通信成本、主实验、消融与 Pareto 证据。"],
   audit: ["运行审计", "追踪任务历史、模型配置与实验记录。"],
 };
 const manuals = {
@@ -90,6 +93,11 @@ const manuals = {
     "Experiments 页用于运行原项目实验脚本并生成课程报告图表。这里的 Task.py 是场景数据生成器，任务画像是统计目标和验证口径，二者不是同一个概念。",
     "按钮说明：运行鲁棒性实验生成 CSV；生成鲁棒性图、进化图和终稿图会调用绘图脚本；按钮按下后会先写入控制台并禁用按钮，任务完成后恢复。",
     "实验产物表中的“本页预览”会在右侧直接打开图片、PDF、CSV 或 JSON，不再跳转到 Outputs 页。协议选择采用“来源场景 + 协议”两级下拉，页面会自动拼成脚本需要的 name:source 格式。",
+  ],
+  statistics: [
+    "本页对应分工文档中的“统计协议与算法实验负责人”任务：共享统计草图、均值/方差/基数/Top-k、通信成本模型、基线协议、主实验、消融实验和 Pareto 图。",
+    "通信 bits 是 reader bits + tag bits；slots、frames、rounds 同时保留，CPU 时间只作为参考。每个实验行携带 distribution、num_tags 和 seed，筛选后可核对公平对比。",
+    "图表和原始 JSON/CSV/PDF/PNG 均来自 Experiments/stat_protocols；失败行与 llm_random 负结果不会从页面隐藏。",
   ],
   audit: [
     "审计页用于确认模型配置、AI 生成任务、运行计数和历史记录。",
@@ -1333,6 +1341,132 @@ async function previewArtifact(path) {
   switchView("outputs");
   await renderAssetPreview(path, "outputPreview");
 }
+function statModeData() {
+  return state.statistics?.modes?.[$("statisticsMode")?.value || "main"] || { rows: [], summary: [], pareto: [], artifacts: [] };
+}
+function statFilters() {
+  return {
+    task: $("statisticsTask")?.value || "all",
+    distribution: $("statisticsDistribution")?.value || "all",
+    scale: $("statisticsScale")?.value || "all",
+  };
+}
+function selectedStatRows() {
+  const f = statFilters();
+  return statModeData().rows.filter((row) =>
+    (f.task === "all" || row.task === f.task) &&
+    (f.distribution === "all" || row.distribution === f.distribution) &&
+    (f.scale === "all" || String(row.num_tags) === f.scale),
+  );
+}
+function statError(row) {
+  if (row.f1 !== null && row.f1 !== undefined) return 1 - Number(row.f1);
+  return row.relative_error === null || row.relative_error === undefined ? null : Number(row.relative_error);
+}
+function avgStat(values) {
+  const numbers = values.map(Number).filter(Number.isFinite);
+  return numbers.length ? numbers.reduce((a, b) => a + b, 0) / numbers.length : null;
+}
+function aggregateStatRows(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    if (!groups.has(row.protocol)) groups.set(row.protocol, []);
+    groups.get(row.protocol).push(row);
+  });
+  return [...groups.entries()].map(([protocol, values]) => {
+    const success = values.filter((x) => x.status === "success");
+    const errors = success.map(statError).filter((x) => x !== null && Number.isFinite(x));
+    return {
+      protocol,
+      runs: values.length,
+      successRate: values.length ? success.length / values.length : 0,
+      error: avgStat(errors),
+      f1: avgStat(success.map((x) => x.f1).filter((x) => x !== null && x !== undefined)),
+      communication: avgStat(values.map((x) => x.communication_bits)),
+      reader: avgStat(values.map((x) => x.reader_bits)),
+      tag: avgStat(values.map((x) => x.tag_bits)),
+      slots: avgStat(values.map((x) => x.slots)),
+      frames: avgStat(values.map((x) => x.frames)),
+      rounds: avgStat(values.map((x) => x.rounds)),
+      failures: values.length - success.length,
+    };
+  }).sort((a, b) => (a.communication || Infinity) - (b.communication || Infinity));
+}
+function fmtStat(value, digits = 2) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+  return Number(value).toLocaleString("zh-CN", { maximumFractionDigits: digits });
+}
+function renderStatistics() {
+  if (!$("statisticsMetrics") || !state.statistics) return;
+  const rows = selectedStatRows();
+  const aggregates = aggregateStatRows(rows);
+  const dimensions = state.statistics.dimensions || {};
+  const fillFilter = (id, values, label) => {
+    const el = $(id);
+    if (!el) return;
+    const old = el.value;
+    el.innerHTML = `<option value="all">全部${label}</option>` + values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+    if (["all", ...values.map(String)].includes(old)) el.value = old;
+  };
+  const modeRows = statModeData().rows;
+  fillFilter("statisticsTask", [...new Set(modeRows.map((x) => x.task))].sort(), "任务");
+  fillFilter("statisticsDistribution", [...new Set(modeRows.map((x) => x.distribution).filter(Boolean))].sort(), "分布");
+  fillFilter("statisticsScale", [...new Set(modeRows.map((x) => x.num_tags).filter(Boolean))].sort((a, b) => a - b), "规模");
+  const selected = statFilters();
+  // Re-apply filters after options are rebuilt.
+  ["statisticsTask", "statisticsDistribution", "statisticsScale"].forEach((id) => { if ($(id) && selected[id.replace("statistics", "").toLowerCase()] !== undefined) $(id).value = selected[id.replace("statistics", "").toLowerCase()]; });
+  const currentRows = selectedStatRows();
+  const current = aggregateStatRows(currentRows);
+  $("statisticsMetrics").innerHTML = [
+    ["覆盖任务", `${new Set(currentRows.map((x) => x.task)).size}/4`, "tone-teal"],
+    ["公平对比行", currentRows.length, "tone-green"],
+    ["协议数量", current.length, "tone-violet"],
+    ["失败/负结果", current.reduce((n, x) => n + x.failures, 0), "tone-amber"],
+  ].map(([label, value, toneName]) => `<div class="metric ${toneName}"><span>${label}</span><strong>${esc(value)}</strong></div>`).join("");
+  $("statisticsPointCount").textContent = `${current.length} 个协议点`;
+  $("statisticsProtocolCount").textContent = `${current.length} 个协议`;
+  const maxX = Math.max(...current.map((x) => Number(x.communication) || 1), 10);
+  const logMaxX = Math.log10(maxX);
+  const maxY = Math.max(0.05, ...current.map((x) => Number(x.error) || 0));
+  const width = 720, height = 330, left = 70, right = 24, top = 22, bottom = 52;
+  const px = (v) => left + (Math.log10(Math.max(1, v)) / logMaxX) * (width - left - right);
+  const py = (v) => height - bottom - (Math.min(maxY, Math.max(0, v)) / maxY) * (height - top - bottom);
+  const colors = ["#148b82", "#356ce8", "#7c62ca", "#ad701b", "#c24452", "#26875b", "#526b84", "#b45c8d"];
+  const xTicks = [0, 0.5, 1].map((ratio) => Math.pow(maxX, ratio));
+  const yTicks = [0, maxY / 2, maxY];
+  $("statisticsScatter").innerHTML = current.length ? `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="通信量与误差散点图">${yTicks.map((v) => `<line x1="${left}" x2="${width - right}" y1="${py(v)}" y2="${py(v)}" stroke="#e6ebf2"/><text x="${left - 10}" y="${py(v) + 4}" text-anchor="end">${esc((v * 100).toFixed(1))}%</text>`).join("")}${xTicks.map((v) => `<line x1="${px(v)}" x2="${px(v)}" y1="${top}" y2="${height - bottom}" stroke="#f0f3f7"/><text x="${px(v)}" y="${height - bottom + 24}" text-anchor="middle">${esc(fmtStat(v, 0))}</text>`).join("")}<line x1="${left}" x2="${width - right}" y1="${height - bottom}" y2="${height - bottom}" stroke="#8da0b5"/><line x1="${left}" x2="${left}" y1="${top}" y2="${height - bottom}" stroke="#8da0b5"/>${current.map((row, i) => { const err = row.error || 0; return `<circle cx="${px(row.communication || 1)}" cy="${py(err)}" r="7" fill="${colors[i % colors.length]}" opacity=".9"><title>${esc(row.protocol)} · 通信 ${esc(fmtStat(row.communication, 0))} bits · 误差 ${esc((err * 100).toFixed(2))}%</title></circle>`; }).join("")}<text x="${(left + width - right) / 2}" y="${height - 7}" text-anchor="middle">平均通信量（reader + tag bits，建议越低越好）</text><text x="16" y="${(height + top - bottom) / 2}" transform="rotate(-90 16 ${(height + top - bottom) / 2})" text-anchor="middle">误差（Top-k 为 1-F1）</text></svg>` : `<div class="mini-note">当前筛选没有可绘制的成功结果。</div>`;
+  $("statisticsLegend").innerHTML = current.map((row, i) => `<span><i style="background:${colors[i % colors.length]}"></i>${esc(row.protocol)}</span>`).join("");
+  $("statisticsRows").innerHTML = current.length ? current.map((row) => `<tr><td><b>${esc(row.protocol)}</b></td><td>${esc((row.successRate * 100).toFixed(1))}%</td><td>${row.f1 !== null ? `F1 ${esc(fmtStat(row.f1 * 100, 1))}%` : esc(fmtStat(row.error * 100, 2)) + "%"}</td><td>${esc(fmtStat(row.communication, 0))}</td><td>${esc(fmtStat(row.reader, 0))} / ${esc(fmtStat(row.tag, 0))}</td><td>${esc(fmtStat(row.slots, 0))} / ${esc(fmtStat(row.frames, 0))} / ${esc(fmtStat(row.rounds, 0))}</td><td>${esc(row.failures)}</td></tr>`).join("") : empty(7, "当前筛选没有数据");
+  const bestCost = current.find((x) => x.successRate > 0);
+  const bestQuality = [...current].filter((x) => x.error !== null).sort((a, b) => a.error - b.error)[0];
+  $("statisticsInsights").innerHTML = `<div class="insight-card"><span>当前筛选</span><strong>${esc(selected.task === "all" ? "全部任务" : selected.task)} · ${esc(selected.distribution === "all" ? "全部分布" : selected.distribution)} · ${esc(selected.scale === "all" ? "全部规模" : selected.scale + " 标签")}</strong></div><div class="insight-card"><span>最低通信量成功协议</span><strong>${esc(bestCost?.protocol || "暂无")} ${bestCost ? `· ${esc(fmtStat(bestCost.communication, 0))} bits` : ""}</strong></div><div class="insight-card"><span>最低误差协议</span><strong>${esc(bestQuality?.protocol || "暂无")} ${bestQuality ? `· ${esc((bestQuality.error * 100).toFixed(2))}%` : ""}</strong></div><p class="mini-note">结论只基于当前筛选的通信量与误差；CPU 时间不参与排名。</p>`;
+  $("statisticsFilterNote").textContent = `当前条件：${currentRows.length} 行，覆盖 ${new Set(currentRows.map((x) => x.seed)).size} 个 seed；每行同时记录 reader/tag、slots、frames、rounds。`;
+  renderStatisticsArtifacts();
+  renderStatisticsCoverage();
+}
+function renderStatisticsArtifacts() {
+  const mode = $("statisticsMode")?.value || "main";
+  const artifacts = statModeData().artifacts || [];
+  $("statisticsArtifacts").innerHTML = artifacts.map((a) => `<button class="statistics-artifact" type="button" data-stat-artifact="${esc(a.path)}"><span class="pill">${esc(a.kind.toUpperCase())}</span><b>${esc(a.name)}</b><small>${esc(bytes(a.size))}</small></button>`).join("") || `<div class="mini-note">${mode} 暂无产物。</div>`;
+  $("statisticsChartImage").src = `/api/selfopt/raw?path=${encodeURIComponent(`Experiments/stat_protocols/${mode}/communication_error.png`)}`;
+  document.querySelectorAll("[data-stat-artifact]").forEach((el) => (el.onclick = () => renderAssetPreview(el.dataset.statArtifact, "statisticsAssetPreview")));
+}
+function renderStatisticsCoverage() {
+  const rows = state.statistics?.coverage || [];
+  const passed = rows.filter((x) => x.status).length;
+  $("statisticsCoverageCount").textContent = `${passed}/${rows.length}`;
+  $("statisticsCoverage").innerHTML = rows.map((row) => `<div class="coverage-item ${row.status ? "passed" : "pending"}"><span class="coverage-icon">${row.status ? "✓" : "!"}</span><div><b>${esc(row.title)}</b><small>${esc(row.evidence)}</small></div></div>`).join("");
+  $("statisticsCommands").textContent = (state.statistics?.commands || []).join("\n");
+}
+async function loadStatistics() {
+  try {
+    state.statistics = await api("/api/statistics/benchmark");
+    renderStatistics();
+  } catch (error) {
+    state.statistics = { modes: {}, coverage: [], dimensions: {} };
+    if ($("statisticsInsights")) $("statisticsInsights").innerHTML = `<div class="mini-note">统计基准读取失败：${esc(error.message)}</div>`;
+  }
+}
 function renderAudit() {
   const counts = state.selfopt?.database_counts || {};
   $("auditMetrics").innerHTML = [
@@ -1383,6 +1517,7 @@ function renderAll() {
   renderAudit();
   renderArtifacts();
   renderOutputs();
+  renderStatistics();
   renderParentPoolBars();
   if (state.lastIteration) renderIterationResult();
 }
@@ -1550,6 +1685,16 @@ function bind() {
   $("plotEvolution").onclick = (e) =>
     runExperiment("plot_evolution", e.currentTarget);
   $("plotFinal").onclick = (e) => runExperiment("plot_final", e.currentTarget);
+  if ($("statisticsMode")) {
+    ["statisticsMode", "statisticsTask", "statisticsDistribution", "statisticsScale"].forEach((id) => {
+      $(id).onchange = renderStatistics;
+    });
+    $("reloadStatistics").onclick = loadStatistics;
+    $("openStatisticsMain").onclick = () => {
+      const first = state.statistics?.modes?.main?.artifacts?.[0];
+      if (first) renderAssetPreview(first.path, "statisticsAssetPreview");
+    };
+  }
 }
 function prepareWorkspace() {
   document.querySelectorAll(".guide").forEach((guide) => {
@@ -1576,6 +1721,7 @@ bind();
 switchView(location.hash.slice(1) || "overview");
 loadState(false)
   .then(() => {
+    loadStatistics();
     fillRecommendedParents();
     updateNamesForTask(true);
     renderTaskProfileInfo();

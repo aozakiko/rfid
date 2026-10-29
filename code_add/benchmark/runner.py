@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+from dataclasses import replace
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -79,6 +80,22 @@ def run_benchmark(spec: TaskSpec, *, seeds: Iterable[int] | None = None, sizes: 
                     for task in case.tasks:
                         try:
                             result = protocol.run(tags, task, case)
+                            # Keep the exact comparison dimensions on every row so
+                            # the Web report can prove that protocols shared the
+                            # same distribution, seed and scale.
+                            result = replace(
+                                result,
+                                metadata={
+                                    **dict(result.metadata),
+                                    "distribution": case.distribution,
+                                    "num_tags": case.num_tags,
+                                    "price_min": case.price_min,
+                                    "price_max": case.price_max,
+                                    "missing_rate": case.missing_rate,
+                                    "noise_rate": case.noise_rate,
+                                    "enabled_tasks": list(case.tasks),
+                                },
+                            )
                         except Exception as exc:  # retain failures as first-class benchmark rows.
                             result = RunResult(protocol_name, task, None, None, 0, 0, 0, 0, 0, case.seed, failure_reason=f"{type(exc).__name__}: {exc}")
                         reports.append(evaluate_run(result, cost_model))

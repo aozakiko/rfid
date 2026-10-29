@@ -964,6 +964,61 @@
           </section>
         </section>
 
+        <section id="view-statistics" class="view">
+          <div class="guide statistics-guide">
+            <b>刘滕飞任务可视化：</b>这里直接呈现共享统计草图、四类基线、通信成本、误差、主实验、消融实验和 Pareto 结果。
+            每个点都保留分布、标签规模和 seed，切换筛选条件即可核对“同一实验条件下的公平对比”。
+          </div>
+          <div class="grid-4" id="statisticsMetrics"></div>
+          <section class="panel pad statistics-controls">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0">
+              <div>
+                <div class="eyebrow ink">REPRODUCIBLE BENCHMARK</div>
+                <h2>通信成本—误差分析</h2>
+              </div>
+              <div class="actions">
+                <button class="btn secondary" id="reloadStatistics" type="button">刷新基准</button>
+                <button class="btn secondary" id="openStatisticsMain" type="button">打开主实验目录</button>
+              </div>
+            </div>
+            <div class="form-grid statistics-filter-grid">
+              <div><label>实验集</label><select id="statisticsMode"><option value="main">主实验</option><option value="ablation">消融实验</option></select></div>
+              <div><label>统计任务</label><select id="statisticsTask"></select></div>
+              <div><label>数据分布</label><select id="statisticsDistribution"></select></div>
+              <div><label>标签规模</label><select id="statisticsScale"></select></div>
+            </div>
+            <div class="mini-note" id="statisticsFilterNote">载入 benchmark 后可按任务、分布和规模筛选。</div>
+          </section>
+          <div class="statistics-layout">
+            <section class="panel pad">
+              <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>通信量与误差 Pareto 视图</h2><span class="pill" id="statisticsPointCount">0 个点</span></div>
+              <div id="statisticsScatter" class="statistics-scatter" aria-label="通信量与误差散点图"></div>
+              <div id="statisticsLegend" class="statistics-legend"></div>
+            </section>
+            <section class="panel pad">
+              <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>实验结论摘要</h2><span class="pill">可追溯</span></div>
+              <div id="statisticsInsights" class="statistics-insights"></div>
+            </section>
+          </div>
+          <div class="statistics-layout">
+            <section class="panel">
+              <div class="panel-head"><h2>协议对比</h2><span class="pill" id="statisticsProtocolCount">0</span></div>
+              <div class="scroll statistics-table-scroll"><table><thead><tr><th>协议</th><th>成功率</th><th>误差/F1</th><th>通信 bits</th><th>reader/tag</th><th>slots/frames/rounds</th><th>失败</th></tr></thead><tbody id="statisticsRows"></tbody></table></div>
+            </section>
+            <section class="panel pad">
+              <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>主图与原始资产</h2><span class="pill">PNG · PDF · JSON · CSV</span></div>
+              <div id="statisticsArtifacts" class="statistics-artifacts"></div>
+              <div class="statistics-chart-preview"><img id="statisticsChartImage" alt="通信量与误差图" /></div>
+              <div id="statisticsAssetPreview" class="statistics-asset-preview"><div class="mini-note">点击资产名称可在此处预览完整 JSON、CSV、PNG 或 PDF。</div></div>
+            </section>
+          </div>
+          <section class="panel pad">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><div><div class="eyebrow ink">ROLE CHECKLIST</div><h2>与分工文档逐项对照</h2></div><span class="pill" id="statisticsCoverageCount">0/0</span></div>
+            <div id="statisticsCoverage" class="coverage-grid"></div>
+            <details class="statistics-commands"><summary>一键复现实验命令</summary><pre id="statisticsCommands" class="console"></pre></details>
+          </section>
+        </section>
+
         <section id="view-audit" class="view">
           <div class="guide">
             <b>本页说明：</b>审计页展示运行记录、AI

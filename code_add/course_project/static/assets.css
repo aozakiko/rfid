@@ -175,6 +175,179 @@ textarea {
 #view-experiments .artifact-grid .scroll th:nth-child(4) {
   width: 22%;
 }
+.statistics-guide {
+  border-left-color: #7c62ca;
+}
+.statistics-filter-grid {
+  margin-top: 12px;
+}
+.statistics-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, .85fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+.statistics-scatter {
+  width: 100%;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid #e7edf4;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbfdff, #f7fafc);
+}
+.statistics-scatter svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 300px;
+  color: #718197;
+  font-size: 11px;
+}
+.statistics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 12px;
+  color: #607188;
+  font-size: 12px;
+}
+.statistics-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.statistics-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.statistics-insights {
+  display: grid;
+  gap: 10px;
+}
+.insight-card {
+  padding: 13px 15px;
+  border: 1px solid #e6ebf2;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+.insight-card span,
+.insight-card strong {
+  display: block;
+}
+.insight-card span {
+  color: #74849a;
+  font-size: 12px;
+}
+.insight-card strong {
+  margin-top: 3px;
+  color: #213b5b;
+  overflow-wrap: anywhere;
+}
+.statistics-table-scroll {
+  max-height: 480px;
+}
+#view-statistics .statistics-table-scroll th:nth-child(1) { width: 17%; }
+#view-statistics .statistics-table-scroll th:nth-child(2) { width: 10%; }
+#view-statistics .statistics-table-scroll th:nth-child(3) { width: 14%; }
+#view-statistics .statistics-table-scroll th:nth-child(4) { width: 14%; }
+#view-statistics .statistics-table-scroll th:nth-child(5) { width: 17%; }
+#view-statistics .statistics-table-scroll th:nth-child(6) { width: 20%; }
+#view-statistics .statistics-table-scroll th:nth-child(7) { width: 8%; }
+.statistics-artifacts {
+  display: grid;
+  gap: 8px;
+}
+.statistics-artifact {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #e4eaf1;
+  border-radius: 10px;
+  color: #294666;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+.statistics-artifact:hover {
+  border-color: #8aa9e9;
+  background: #f6f9ff;
+}
+.statistics-artifact b,
+.statistics-artifact small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.statistics-artifact small {
+  color: #7f8da1;
+}
+.statistics-chart-preview {
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid #e7edf4;
+  border-radius: 12px;
+  background: #fafcfe;
+}
+.statistics-chart-preview img {
+  display: block;
+  width: 100%;
+  max-height: 290px;
+  object-fit: contain;
+}
+.statistics-asset-preview {
+  margin-top: 14px;
+  min-width: 0;
+}
+.coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.coverage-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: 76px;
+  padding: 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+.coverage-item.passed {
+  border-color: #cbe9df;
+  background: #f3fbf8;
+}
+.coverage-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: #fff;
+  background: #95a3b4;
+  font-size: 12px;
+}
+.coverage-item.passed .coverage-icon { background: #19866f; }
+.coverage-item b,
+.coverage-item small { display: block; overflow-wrap: anywhere; }
+.coverage-item small { margin-top: 3px; color: #74849a; font-size: 11px; }
+.statistics-commands { margin-top: 16px; }
+.statistics-commands summary { cursor: pointer; color: #356ce8; }
+@media (max-width: 1050px) {
+  .statistics-layout { grid-template-columns: 1fr; }
+  .coverage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .coverage-grid { grid-template-columns: 1fr; }
+  #view-statistics .statistics-table-scroll { overflow-x: auto; }
+  #view-statistics .statistics-table-scroll table { min-width: 850px; }
+}
 .scroll td b {
   display: -webkit-box;
   -webkit-line-clamp: 2;
