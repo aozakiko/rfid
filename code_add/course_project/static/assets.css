@@ -183,14 +183,14 @@ textarea {
 }
 .statistics-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(300px, .85fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(310px, .85fr);
   gap: 18px;
   margin-top: 18px;
 }
 .statistics-scatter {
   width: 100%;
   min-height: 300px;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid #e7edf4;
   border-radius: 14px;
   background: linear-gradient(180deg, #fbfdff, #f7fafc);
@@ -200,6 +200,7 @@ textarea {
   width: 100%;
   height: auto;
   min-height: 300px;
+  min-width: 580px;
   color: #718197;
   font-size: 11px;
 }
@@ -216,6 +217,19 @@ textarea {
   align-items: center;
   gap: 6px;
 }
+.statistics-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  color: #607188;
+  font-size: 12px;
+  cursor: pointer;
+}
+.statistics-scatter circle[role="button"] { cursor: pointer; }
+.statistics-scatter circle[role="button"]:hover { stroke-width: 4; }
 .statistics-legend i {
   display: inline-block;
   width: 9px;
@@ -247,7 +261,22 @@ textarea {
 }
 .statistics-table-scroll {
   max-height: 480px;
+  overflow: auto;
 }
+.statistics-table-scroll table { min-width: 880px; }
+.statistics-protocol-link { background: none; border: 0; padding: 0; color: #356ce8; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.statistics-ci { display: block; margin-top: 4px; color: #74849a; font-size: 11px; }
+.statistics-run-detail { margin: 8px 0; border: 1px solid #e3eaf2; border-radius: 10px; padding: 10px 12px; }
+.statistics-run-detail summary { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; cursor: pointer; overflow-wrap: anywhere; }
+.statistics-run-detail summary > span:first-child { font-weight: 600; }
+.statistics-run-detail summary > span:last-child { color: #63788f; font-size: 12px; }
+#statisticsJobLog { max-height: 250px; overflow: auto; }
+#view-statistics > .panel { margin-top: 18px; }
+.statistics-filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.statistics-asset-preview .asset-content { max-height: 600px; overflow: auto; }
+.coverage-item.pending { background: #fffaf0; border-color: #eeddb7; }
+.coverage-item.pending .coverage-icon { background: #ad701b; }
+.insight-card small { color: #6d8096; display: block; margin-top: 5px; }
 #view-statistics .statistics-table-scroll th:nth-child(1) { width: 17%; }
 #view-statistics .statistics-table-scroll th:nth-child(2) { width: 10%; }
 #view-statistics .statistics-table-scroll th:nth-child(3) { width: 14%; }
@@ -344,6 +373,7 @@ textarea {
   .coverage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
+  .statistics-filter-grid { grid-template-columns: 1fr; }
   .coverage-grid { grid-template-columns: 1fr; }
   #view-statistics .statistics-table-scroll { overflow-x: auto; }
   #view-statistics .statistics-table-scroll table { min-width: 850px; }

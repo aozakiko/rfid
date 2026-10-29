@@ -1,166 +1,187 @@
-"""Reference statistical protocols used by the reproducible benchmark.
+"""Measured software-channel baselines and shared/fixed/adaptive protocols.
 
-These are simulation protocols: tags expose values to the protocol simulator,
-while the returned counters model what would be transmitted over RFID.  This
-keeps algorithm comparisons deterministic and makes the communication claims
-explicit instead of hiding them in a self-reported execution time.
+Only the evaluator builds truth. Reader-side decisions use anonymous channel
+observations. Baseline assumptions and channel limitations are in README.md.
 """
 from __future__ import annotations
 
-import math
-import random
 import time
+import random
 from collections import Counter
-from typing import Any, Iterable
+from dataclasses import replace
+import numpy as np
 
-from .contracts import CostModel, RunResult, TaskSpec
-from .sketches import SharedStatSketch
-
-
-def _values(tags: Iterable[Any]) -> list[float]:
-    return [float(getattr(tag, "price")) for tag in tags]
+from .contracts import RunResult, TaskSpec
+from .channel import HistogramChannel
+from .sketches import SharedStatSketch, confidence_gap
 
 
-def _truth(values: list[float], task: str, top_k: int) -> Any:
+def _values(tags):
+    return [float(tag.price) for tag in tags]
+
+
+def _truth(values, task, top_k):
     if not values:
         return [] if task == "top_k" else 0.0
     if task == "mean":
         return sum(values) / len(values)
     if task == "variance":
         mean = sum(values) / len(values)
-        return sum((x - mean) ** 2 for x in values) / len(values)
+        return sum((v - mean) ** 2 for v in values) / len(values)
     if task == "cardinality":
         return len(values)
     if task == "top_k":
-        counts = Counter(values)
-        return [x for x, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[: max(1, top_k)]]
-    raise ValueError(f"unsupported task: {task}")
+        return [v for v, _ in sorted(Counter(values).items(), key=lambda x: (-x[1], x[0]))[:top_k]]
+    raise ValueError(task)
 
 
 class _BaseProtocol:
     name = "protocol"
+    tasks = ("mean", "variance", "cardinality", "top_k")
 
-    def _result(self, tags, task: str, spec: TaskSpec, estimate: Any, *, reader_bits: int, tag_bits: int, slots: int, frames: int, rounds: int, metadata=None, started: float | None = None) -> RunResult:
+    def run(self, tags, task, spec):
+        if task not in self.tasks:
+            return RunResult(self.name, task, None, None, 0, 0, 0, 0, 0, spec.seed, failure_reason="unsupported_task")
+        return self.run_many(tags, replace(spec, tasks=(task,)))[task]
+
+    def _results(self, tags, spec, estimates, counters, metadata, started):
+        # Independent evaluator truth, never passed back into measurement.
         values = _values(tags)
-        return RunResult(
-            protocol=self.name,
-            task=task,
-            truth=_truth(values, task, spec.top_k),
-            estimate=estimate,
-            reader_bits=reader_bits,
-            tag_bits=tag_bits,
-            slots=slots,
-            frames=frames,
-            rounds=rounds,
-            seed=spec.seed,
-            cpu_time_ms=round((time.perf_counter() - started) * 1000, 6) if started else 0.0,
-            metadata=metadata or {},
-        )
-
-    def _failed(self, task: str, spec: TaskSpec, reason: str) -> RunResult:
-        return RunResult(self.name, task, None, None, 0, 0, 0, 0, 0, spec.seed, failure_reason=reason)
+        return {task: RunResult(
+            self.name, task, _truth(values, task, spec.top_k), estimates[task],
+            **counters, seed=spec.seed,
+            cpu_time_ms=(time.process_time() - started) * 1000,
+            metadata={**metadata, "bundle_cost": counters, "collection_id": f"{self.name}:{spec.seed}:{spec.distribution}:{spec.num_tags}", "cost_scope": "one_collection_shared_across_enabled_tasks"},
+        ) for task in spec.tasks if task in estimates}
 
 
 class PollingProtocol(_BaseProtocol):
-    """One query/response round per tag."""
-
     name = "polling"
 
-    def run(self, tags, task: str, spec: TaskSpec) -> RunResult:
-        started = time.perf_counter()
+    def run_many(self, tags, spec, channel=None):
+        started = time.process_time()
+        # Baseline explicitly reads a 32-bit ID/address and 32-bit attribute.
         values = _values(tags)
-        estimate = _truth(values, task, spec.top_k)
         n = len(values)
-        return self._result(tags, task, spec, estimate, reader_bits=n * 32, tag_bits=n * 32, slots=n, frames=n, rounds=n, metadata={"strategy": "one_tag_per_round"}, started=started)
+        counters = dict(reader_bits=n * 32, tag_bits=n * 32, slots=n, frames=n, rounds=n)
+        return self._results(tags, spec, {t: _truth(values, t, spec.top_k) for t in spec.tasks}, counters, {"strategy": "addressed_polling", "privacy": "reveals_individual_values"}, started)
 
 
-class FullIdentificationProtocol(_BaseProtocol):
-    """Identify every tag once, then compute all requested statistics locally."""
-
+class FullIdentificationProtocol(PollingProtocol):
     name = "full_identification"
 
-    def run(self, tags, task: str, spec: TaskSpec) -> RunResult:
-        started = time.perf_counter()
+    def run_many(self, tags, spec, channel=None):
+        started = time.process_time()
         values = _values(tags)
-        estimate = _truth(values, task, spec.top_k)
         n = len(values)
-        return self._result(tags, task, spec, estimate, reader_bits=64, tag_bits=n * 64, slots=n, frames=1, rounds=1, metadata={"strategy": "identify_all_then_compute"}, started=started)
-
-
-class SingleTaskProtocol(_BaseProtocol):
-    """Task-specific sketch baseline; only one statistic is collected."""
-
-    def __init__(self, task_name: str):
-        if task_name not in {"mean", "variance", "cardinality", "top_k"}:
-            raise ValueError(f"unsupported task: {task_name}")
-        self.task_name = task_name
-        self.name = f"single_{task_name}"
-
-    def run(self, tags, task: str, spec: TaskSpec) -> RunResult:
-        if task != self.task_name:
-            return self._failed(task, spec, f"single-task protocol only supports {self.task_name}")
-        started = time.perf_counter()
-        values = _values(tags)
-        estimate = _truth(values, task, spec.top_k)
-        n = len(values)
-        bits = {"mean": 32, "variance": 48, "cardinality": 16, "top_k": max(8, spec.top_k * 16)}[task]
-        frame_size = max(64, min(4096, int(math.sqrt(max(1, n)) * 32)))
-        return self._result(tags, task, spec, estimate, reader_bits=64, tag_bits=n * bits, slots=frame_size, frames=1, rounds=1, metadata={"strategy": "task_specific_sketch", "bits_per_tag": bits}, started=started)
+        counters = dict(reader_bits=160, tag_bits=n * 64, slots=n, frames=1, rounds=1)
+        return self._results(tags, spec, {t: _truth(values, t, spec.top_k) for t in spec.tasks}, counters, {"strategy": "ideal_collision_free_full_id", "optimistic_lower_bound": True, "privacy": "reveals_ids_and_values"}, started)
 
 
 class SharedSketchProtocol(_BaseProtocol):
-    """One shared collection pass for mean, variance, cardinality and Top-k."""
-
     name = "shared_sketch"
 
-    def run(self, tags, task: str, spec: TaskSpec) -> RunResult:
-        if task not in set(spec.tasks):
-            return self._failed(task, spec, "task is not enabled in shared sketch")
-        started = time.perf_counter()
-        values = _values(tags)
-        sketch = SharedStatSketch(heavy_hitter_capacity=max(16, spec.top_k * 8))
-        for value in values:
-            sketch.update(value)
-        estimate = sketch.estimate(task, spec.top_k)
-        n = len(values)
-        enabled = [t for t in spec.tasks if t in {"mean", "variance", "cardinality", "top_k"}]
-        # Shared headers and one compact contribution per enabled statistic;
-        # this is intentionally below the sum of four single-task payloads.
-        bits_per_tag = 12 + 8 * len(enabled)
-        frame_size = max(128, min(8192, 2 ** math.ceil(math.log2(max(1, int(math.sqrt(max(1, n)) * 16))))))
-        metadata = {"strategy": "shared_sketch", "enabled_tasks": enabled, "bits_per_tag": bits_per_tag, "sketch": "moments+bitmap+heavy_hitters"}
-        return self._result(tags, task, spec, estimate, reader_bits=96, tag_bits=n * bits_per_tag, slots=frame_size, frames=1, rounds=1, metadata=metadata, started=started)
+    def __init__(self, rounds=1, threshold=None, name=None, slots_per_value=256):
+        self.max_rounds = rounds
+        self.threshold = threshold
+        self.slots_per_value = slots_per_value
+        if name:
+            self.name = name
+
+    def run_many(self, tags, spec, channel=None):
+        started = time.process_time()
+        channel = channel or HistogramChannel(tags, spec)
+        counts = np.zeros(spec.price_max - spec.price_min + 1)
+        variance = np.zeros_like(counts)
+        counters = dict(reader_bits=0, tag_bits=0, slots=0, frames=0, rounds=0)
+        trace = []
+        saturated = 0
+        for round_index in range(self.max_rounds):
+            observation = channel.observe(round_index, self.slots_per_value)
+            counts += observation.counts
+            variance += observation.variance
+            for key in counters:
+                counters[key] += getattr(observation, key)
+            saturated += observation.saturated_bins
+            r = round_index + 1
+            gap = confidence_gap(counts / r, variance / (r * r), spec.top_k)
+            trace.append({"round": r, "boundary_gap": gap if np.isfinite(gap) else None, "saturated_bins": observation.saturated_bins})
+            if self.threshold is not None and gap >= self.threshold and not saturated:
+                break
+        sketch = SharedStatSketch.from_histogram(counts / counters["rounds"], spec.price_min)
+        return self._results(tags, spec, {t: sketch.estimate(t, spec.top_k) for t in spec.tasks}, counters, {
+            "strategy": "anonymous_occupancy_histogram", "slots_per_value": self.slots_per_value,
+            "enabled_tasks": list(spec.tasks), "trace": trace, "threshold": self.threshold,
+            "saturated_bins": saturated, "stopped_early": counters["rounds"] < self.max_rounds,
+            "confidence_kind": "delta_method_boundary_heuristic_not_coverage_guarantee",
+            "privacy": "aggregate_histogram_no_reader_access_to_tags",
+        }, started)
 
 
-class LLMRandomProtocol(SharedSketchProtocol):
-    """A deliberately noisy generated-style baseline, retained for negative results."""
+class SingleTaskProtocol(SharedSketchProtocol):
+    def __init__(self, task_name):
+        super().__init__(name=f"single_{task_name}")
+        self.tasks = (task_name,)
 
+    def run_many(self, tags, spec, channel=None):
+        return super().run_many(tags, replace(spec, tasks=tuple(t for t in spec.tasks if t in self.tasks)), channel)
+
+
+class SerialTaskProtocol(SharedSketchProtocol):
+    """No-sharing ablation: execute a complete collection once per task."""
+    name = "single_serial"
+
+    def run_many(self, tags, spec, channel=None):
+        started = time.process_time()
+        results = [SingleTaskProtocol(t).run_many(tags, replace(spec, tasks=(t,)), channel)[t] for t in spec.tasks]
+        counters = {k: sum(getattr(result, k) for result in results) for k in ("reader_bits", "tag_bits", "slots", "frames", "rounds")}
+        return self._results(tags, spec, {r.task: r.estimate for r in results}, counters, {"strategy": "independent_task_collections", "enabled_tasks": list(spec.tasks)}, started)
+
+
+class RandomSketchControl(SharedSketchProtocol):
+    """Seeded random *parameters*, explicitly not an actual LLM experiment."""
+    name = "random_sketch_control"
+
+    def run_many(self, tags, spec, channel=None):
+        rng = random.Random(spec.seed ^ 0x9e3779b9)
+        protocol = SharedSketchProtocol(rounds=rng.choice((1, 2, 4)), slots_per_value=rng.choice((16, 32, 64)), name=self.name)
+        return protocol.run_many(tags, spec, channel)
+
+
+class LLMRandomProtocol(_BaseProtocol):
+    """Real generated genotype, compiled only through whitelisted operators.
+
+    Invalid generation is retained as failure, never repaired silently. The
+    same generated candidate is compared on every seed/distribution/scale.
+    Missing provenance is reported, never replaced by synthetic model output.
+    """
     name = "llm_random"
 
-    def run(self, tags, task: str, spec: TaskSpec) -> RunResult:
-        result = super().run(tags, task, spec)
-        if result.failure_reason:
-            return result
-        rng = random.Random(spec.seed ^ 0x9E3779B9)
-        truth = result.truth
-        estimate = result.estimate
-        if task in {"mean", "variance"}:
-            estimate = float(estimate) * (1.0 + rng.uniform(-0.15, 0.15))
-        elif task == "cardinality":
-            estimate = max(0, round(float(estimate) * (1.0 + rng.uniform(-0.2, 0.2))))
-        else:
-            estimate = list(estimate or [])[: max(1, spec.top_k - (1 if rng.random() < 0.5 else 0))]
-        return RunResult(**{**result.__dict__, "estimate": estimate, "metadata": {**dict(result.metadata), "strategy": "random_generated_baseline"}})
+    def __init__(self, candidate=None):
+        self.candidate = candidate
+
+    def run_many(self, tags, spec, channel=None):
+        from .genotype import compile_candidate
+        if not self.candidate:
+            return {t: RunResult(self.name, t, None, None, 0, 0, 0, 0, 0, spec.seed, failure_reason="missing_real_llm_candidate: import a generation record with source/prompt/model provenance") for t in spec.tasks}
+        try:
+            protocol = compile_candidate(self.candidate, name=self.name)
+        except ValueError as exc:
+            return {t: RunResult(self.name, t, None, None, 0, 0, 0, 0, 0, spec.seed, failure_reason=f"invalid_llm_candidate: {exc}") for t in spec.tasks}
+        results = protocol.run_many(tags, spec, channel)
+        return {t: replace(r, metadata={**r.metadata, "candidate_id": self.candidate["candidate_id"], "model": self.candidate["model"], "prompt_hash": self.candidate["prompt_hash"]}) for t, r in results.items()}
 
 
-def protocol_registry(spec: TaskSpec) -> dict[str, _BaseProtocol]:
-    return {
-        "polling": PollingProtocol(),
-        "full_identification": FullIdentificationProtocol(),
-        "single_mean": SingleTaskProtocol("mean"),
-        "single_variance": SingleTaskProtocol("variance"),
-        "single_cardinality": SingleTaskProtocol("cardinality"),
-        "single_top_k": SingleTaskProtocol("top_k"),
-        "shared_sketch": SharedSketchProtocol(),
-        "llm_random": LLMRandomProtocol(),
-    }
+def protocol_registry(spec, llm_candidate=None):
+    registry = {p.name: p for p in (
+        PollingProtocol(), FullIdentificationProtocol(),
+        *(SingleTaskProtocol(t) for t in ("mean", "variance", "cardinality", "top_k")),
+        SerialTaskProtocol(), SharedSketchProtocol(), RandomSketchControl(), LLMRandomProtocol(llm_candidate),
+        SharedSketchProtocol(rounds=2, name="fixed_2"),
+        SharedSketchProtocol(rounds=3, name="fixed_3"),
+        SharedSketchProtocol(rounds=4, name="fixed_4"),
+        SharedSketchProtocol(rounds=4, threshold=1.0, name="adaptive"),
+        SharedSketchProtocol(rounds=4, threshold=0.5, name="adaptive_t05"),
+        SharedSketchProtocol(rounds=4, threshold=2.0, name="adaptive_t20"),
+    )}
+    return registry

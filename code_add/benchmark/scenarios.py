@@ -34,9 +34,11 @@ def generate_tags(spec: TaskSpec) -> list[Tag]:
         for index in range(len(values)):
             if rng.random() < spec.noise_rate:
                 values[index] = rng.randint(lo, hi)
-    if spec.missing_rate > 0:
-        values = [value for value in values if rng.random() >= spec.missing_rate]
-    return [Tag(index, value) for index, value in enumerate(values)]
+    if spec.extreme_rate > 0:
+        for index in range(len(values)):
+            if rng.random() < spec.extreme_rate:
+                values[index] = rng.choice((lo, hi))
+    return [Tag(index, value) for index, value in enumerate(values) if rng.random() >= spec.missing_rate]
 
 
 def distribution_summary(tags: list[Tag]) -> dict[str, Any]:

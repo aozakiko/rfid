@@ -77,3 +77,5 @@ python course_project/build_iot_course_report_v2.py
 刘滕飞负责的统计协议实现位于 [`stat_protocols/`](stat_protocols/README.md)，可复现实验位于 [`benchmark/`](benchmark/README.md)。统一 `RunResult` 会记录 reader/tag bits、slots、frames、rounds、seed、误差和失败原因；主实验、共享草图消融与通信/误差 Pareto 结果可由固定命令一键生成。
 
 启动 Web 服务后，打开 [统计基准页](http://127.0.0.1:8765/#statistics) 可直接筛选并预览这些结果，页面同时提供与分工文档逐项对照的验收清单。
+
+完整交付和协作边界见[刘滕飞任务逐项验收](../docs/刘滕飞任务逐项验收.md)，软件实验口径见[统计实验规格v1](../docs/统计实验规格v1.md)。整套正式实验用 `python -m benchmark.suite --output-dir Experiments/stat_protocols` 复现，默认不调用外部API；真实LLM候选生成/导入后可随套件重跑。

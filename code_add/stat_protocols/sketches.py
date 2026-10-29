@@ -1,55 +1,53 @@
-"""Small shared sketches used by the reference protocol.
-
-The simulator keeps exact counters so a benchmark can be deterministic. The
-wire contract is intentionally sketch-shaped: moments share one accumulator,
-cardinality uses a bitmap-sized counter, and Top-k uses a bounded heavy-hitter
-table. The bounded table is the place to substitute a real KMV/Count-Min
-implementation when hardware constraints are available.
-"""
+"""Shared histogram sufficient statistics computed from anonymous frames."""
 from __future__ import annotations
 
-from collections import Counter
+import numpy as np
 
 
 class SharedStatSketch:
-    def __init__(self, *, heavy_hitter_capacity: int = 64) -> None:
-        self.count = 0
-        self.sum = 0.0
-        self.sum_squares = 0.0
-        self.heavy_hitter_capacity = max(1, int(heavy_hitter_capacity))
-        self.heavy_hitters: Counter[float] = Counter()
+    def __init__(self, *, heavy_hitter_capacity=64):
+        self._counts = {}
 
-    def update(self, value: float) -> None:
+    def update(self, value, weight=1.0):
         value = float(value)
-        self.count += 1
-        self.sum += value
-        self.sum_squares += value * value
-        self.heavy_hitters[value] += 1
-        if len(self.heavy_hitters) > self.heavy_hitter_capacity * 2:
-            keep = self.heavy_hitters.most_common(self.heavy_hitter_capacity)
-            self.heavy_hitters = Counter(dict(keep))
+        self._counts[value] = self._counts.get(value, 0.0) + float(weight)
 
-    def mean(self) -> float:
-        return self.sum / self.count if self.count else 0.0
+    @classmethod
+    def from_histogram(cls, counts, price_min):
+        sketch = cls()
+        sketch._counts = {float(i + price_min): float(v) for i, v in enumerate(counts) if v > 0}
+        return sketch
 
-    def variance(self) -> float:
-        if not self.count:
-            return 0.0
-        return max(0.0, self.sum_squares / self.count - self.mean() ** 2)
+    def cardinality(self):
+        # Population of present tags, not distinct attribute values.
+        return sum(self._counts.values())
 
-    def cardinality(self) -> int:
-        return self.count
+    def mean(self):
+        n = self.cardinality()
+        return sum(v * c for v, c in self._counts.items()) / n if n else 0.0
 
-    def top_k(self, k: int) -> list[float]:
-        return [value for value, _ in sorted(self.heavy_hitters.items(), key=lambda pair: (-pair[1], pair[0]))[: max(1, k)]]
+    def variance(self):
+        n = self.cardinality()
+        mean = self.mean()
+        return max(0.0, sum((v - mean) ** 2 * c for v, c in self._counts.items()) / n) if n else 0.0
 
-    def estimate(self, task: str, top_k: int = 3):
-        if task == "mean":
-            return self.mean()
-        if task == "variance":
-            return self.variance()
-        if task == "cardinality":
-            return self.cardinality()
+    def top_k(self, k):
+        return [v for v, _ in sorted(self._counts.items(), key=lambda x: (-x[1], x[0]))[:k]]
+
+    def estimate(self, task, top_k=3):
         if task == "top_k":
             return self.top_k(top_k)
+        if task in {"mean", "variance", "cardinality"}:
+            return getattr(self, task)()
         raise ValueError(f"unsupported task: {task}")
+
+
+def confidence_gap(counts, variances, k):
+    """Z-like boundary separation heuristic; not a proven coverage guarantee."""
+    positive = np.flatnonzero(counts > 0)
+    if len(positive) <= k:
+        return float("inf")
+    order = np.lexsort((positive, -counts[positive]))
+    a, b = positive[order[k - 1]], positive[order[k]]
+    denom = max(1.0, float(np.sqrt(variances[a] + variances[b])))
+    return float(counts[a] - counts[b]) / denom

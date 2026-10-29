@@ -130,9 +130,22 @@ API Key 仅在当前页面使用，不写入浏览器本地存储、配置文件
 
 “统计基准”是刘滕飞统计协议与算法实验的可视化入口。页面支持按主实验/消融实验、任务、数据分布和标签规模筛选，展示通信量—误差散点图、协议成功率、reader/tag bits、slots、frames、rounds 和失败数量。
 
+![统计基准与多条件筛选](docs/screenshots/11-statistics.png)
+
+新增六组实验：主实验、共享/复核消融、H1三任务共享、H2复核与阈值敏感性、缺失/噪声/极端值、独立盲测。正式规格为20个seed、5个分布、1k/10k/100k；图中可切换bits/slots/rounds，点击协议名或图点可查看分页的逐seed真值、估计值、数据hash、轮次轨迹和失败原因。单场景展示95%CI，跨场景汇总明确标为描述性平均。
+
 页面右侧会列出 `main_reports.json`、`ablation_reports.json`、Pareto JSON、汇总 CSV 以及 PNG/PDF 图表，点击资产名称即可在页面内预览。底部的“与分工文档逐项对照”会核对统一 `RunResult`、同分布/seed/规模、通信成本主指标、基线、负结果和主/消融/Pareto 产物。
 
 直接访问：<http://127.0.0.1:8765/#statistics>。
+
+详细的[刘滕飞任务逐项验收与演示](docs/刘滕飞任务逐项验收.md)、[统计实验规格v1](docs/统计实验规格v1.md)、[自动算法与实验报告](code_add/Experiments/stat_protocols/刘滕飞交付报告.md)均已提供。软件模型的bits优势与预留slots代价同时报告；未达到H1/H2门槛的条件保留。
+
+点击“一键重跑正式实验”将在后台子进程生成整套结果，成功后发布新结果；不阻塞页面。真实LLM基线复用“Prompt与AI”的URL、Key和模型，点击“生成真实LLM随机候选”后再重跑，或者导入候选JSON。没有实际候选时显示待实测并保留失败原因，随机参数组不会冒充模型结果。网关未返回token用量时记为未知，不写0成本。
+
+```powershell
+cd code_add
+python -m benchmark.suite --output-dir Experiments/stat_protocols
+```
 
 ### 3.9 审计
 
@@ -173,7 +186,9 @@ rfid/
 ├─ README.md                         # 本图文操作指南
 ├─ .gitignore                        # 忽略虚拟环境、缓存、数据库和本地密钥
 ├─ docs/
-│  └─ screenshots/                   # 8 个页面及移动端、上传入口截图
+│  ├─ screenshots/                   # 9 个页面、统计复核与验收、移动端、上传入口截图
+│  ├─ 刘滕飞任务逐项验收.md           # 分工逐项对照与3分钟演示
+│  └─ 统计实验规格v1.md               # 指标、成本、假设与共同接口口径
 ├─ code_add/                         # 应用工作目录
 │  ├─ README.md                      # 项目简介与启动说明
 │  ├─ base.py                        # Tag / 协议基础接口
@@ -184,6 +199,8 @@ rfid/
 │  ├─ backend_tools/
 │  │  ├─ openai_compatible.py        # 模型 HTTP 客户端
 │  │  └─ protocol_metrics.py         # 协议指标归一化
+│  ├─ stat_protocols/                # 四任务共享草图、匿名通道、基线与成本契约
+│  ├─ benchmark/                     # 正式/消融/复核/鲁棒/盲测与一键suite
 │  ├─ course_project/
 │  │  ├─ README.md                   # API、实现和运行约定
 │  │  ├─ web_app.py                  # HTTP 路由与工作流编排
@@ -191,6 +208,7 @@ rfid/
 │  │  ├─ validation.py               # 数值范围与布尔参数校验
 │  │  ├─ jobs.py                     # 有界后台队列与进度快照
 │  │  ├─ assets.py                   # 上传校验、有界文本与数据预览
+│  │  ├─ statistics_service.py       # 统计查询、真实LLM候选、子进程实验发布
 │  │  ├─ database.py                 # SQLite 审计与任务记录
 │  │  ├─ selfopt_ui.py               # HTML 导出兼容入口
 │  │  ├─ test_course_project.py       # 核心工作流测试
@@ -200,6 +218,7 @@ rfid/
 │  │  │  ├─ app.css                  # 工作台视觉样式
 │  │  │  ├─ app.js                   # 场景、生成、验证、实验交互
 │  │  │  ├─ assets.css               # 资产预览和响应式细节
+│  │  │  ├─ statistics.js            # 统计/Pareto交互、逐seed证据与基线入口
 │  │  │  └─ asset_ui.js              # 分页、分类预览和上传组件
 │  │  └─ outputs/                    # 平台运行产物与 uploads/
 │  ├─ base_protocol/                # 可复用基础协议
@@ -235,4 +254,10 @@ python -m unittest course_project.test_infrastructure course_project.test_course
 
 ```powershell
 python -m unittest course_project.test_ai_configuration
+```
+
+统计协议与Web统计服务的完整回归：
+
+```powershell
+python -m unittest course_project.test_statistics_service course_project.test_stat_protocols course_project.test_ai_configuration course_project.test_infrastructure course_project.test_course_project -q
 ```

@@ -967,7 +967,7 @@
         <section id="view-statistics" class="view">
           <div class="guide statistics-guide">
             <b>刘滕飞任务可视化：</b>这里直接呈现共享统计草图、四类基线、通信成本、误差、主实验、消融实验和 Pareto 结果。
-            每个点都保留分布、标签规模和 seed，切换筛选条件即可核对“同一实验条件下的公平对比”。
+            每个点都保留分布、标签规模和 seed；本页区分已完成的统计交付、真实 LLM 待实测以及其他成员的集成任务。
           </div>
           <div class="grid-4" id="statisticsMetrics"></div>
           <section class="panel pad statistics-controls">
@@ -982,10 +982,12 @@
               </div>
             </div>
             <div class="form-grid statistics-filter-grid">
-              <div><label>实验集</label><select id="statisticsMode"><option value="main">主实验</option><option value="ablation">消融实验</option></select></div>
+              <div><label>实验集</label><select id="statisticsMode"><option value="main">主实验</option><option value="ablation">消融实验</option><option value="composite">H1 三任务共享采集</option><option value="sensitivity">H2 复核与阈值敏感性</option><option value="robustness">缺失 / 噪声 / 极端值</option><option value="blind">独立盲测</option></select></div>
               <div><label>统计任务</label><select id="statisticsTask"></select></div>
               <div><label>数据分布</label><select id="statisticsDistribution"></select></div>
               <div><label>标签规模</label><select id="statisticsScale"></select></div>
+              <div><label>缺失 / 噪声 / 极端值</label><select id="statisticsScenario"></select></div>
+              <div><label>横轴通信指标</label><select id="statisticsCostAxis"><option value="mean_communication_bits">实际发射 bits</option><option value="mean_slots">全部预留 slots</option><option value="mean_rounds">交互轮数</option></select></div>
             </div>
             <div class="mini-note" id="statisticsFilterNote">载入 benchmark 后可按任务、分布和规模筛选。</div>
           </section>
@@ -994,6 +996,7 @@
               <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>通信量与误差 Pareto 视图</h2><span class="pill" id="statisticsPointCount">0 个点</span></div>
               <div id="statisticsScatter" class="statistics-scatter" aria-label="通信量与误差散点图"></div>
               <div id="statisticsLegend" class="statistics-legend"></div>
+              <div id="statisticsSelection" class="mini-note">悬停查看指标，点击图点或协议行查看逐 seed 详情。</div>
             </section>
             <section class="panel pad">
               <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>实验结论摘要</h2><span class="pill">可追溯</span></div>
@@ -1003,7 +1006,7 @@
           <div class="statistics-layout">
             <section class="panel">
               <div class="panel-head"><h2>协议对比</h2><span class="pill" id="statisticsProtocolCount">0</span></div>
-              <div class="scroll statistics-table-scroll"><table><thead><tr><th>协议</th><th>成功率</th><th>误差/F1</th><th>通信 bits</th><th>reader/tag</th><th>slots/frames/rounds</th><th>失败</th></tr></thead><tbody id="statisticsRows"></tbody></table></div>
+              <div class="scroll statistics-table-scroll"><table><thead><tr><th>协议</th><th>执行成功率</th><th>误差/F1 与 95% CI</th><th>通信 bits</th><th>reader/tag</th><th>slots/frames/rounds</th><th>失败</th></tr></thead><tbody id="statisticsRows"></tbody></table></div>
             </section>
             <section class="panel pad">
               <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>主图与原始资产</h2><span class="pill">PNG · PDF · JSON · CSV</span></div>
@@ -1013,8 +1016,26 @@
             </section>
           </div>
           <section class="panel pad">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>逐 seed 结果与失败原因</h2><span class="pill" id="statisticsDetailCount">选择协议</span></div>
+            <div id="statisticsDetails"><div class="mini-note">点击上方图点或协议行，即可核对真值、估计值、数据 hash、轮次轨迹和失败原因。</div></div>
+          </section>
+          <section class="panel pad">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>复现实验与真实 LLM 基线</h2><span class="pill">后台执行</span></div>
+            <p class="mini-note">统计实验无需 API Key。真实 LLM 候选复用“Prompt 与 AI”页中的 URL、Key、模型配置，一次生成、不选择、不修复；随机参数对照单独标注。未生成真实候选时，对应基线显示待实测。</p>
+            <div class="actions">
+              <button class="btn teal" id="runStatisticsSuite" type="button">一键重跑正式实验（20 seeds）</button>
+              <button class="btn secondary" id="generateStatisticsBaseline" type="button">生成真实 LLM 随机候选</button>
+              <label class="btn secondary" for="importStatisticsCandidate">导入候选 JSON</label>
+              <input id="importStatisticsCandidate" type="file" accept=".json,application/json" hidden />
+            </div>
+            <div id="statisticsCandidate" class="mini-note">当前重跑不包含真实模型候选；生成或导入后将自动携带候选重跑。</div>
+            <pre id="statisticsJobLog" class="console" aria-live="polite">等待统计任务</pre>
+          </section>
+          <section class="panel pad">
             <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><div><div class="eyebrow ink">ROLE CHECKLIST</div><h2>与分工文档逐项对照</h2></div><span class="pill" id="statisticsCoverageCount">0/0</span></div>
             <div id="statisticsCoverage" class="coverage-grid"></div>
+            <div id="statisticsDeliveryArtifacts" class="statistics-artifacts" style="margin-top: 14px"></div>
+            <div id="statisticsInventory" style="margin-top: 14px"></div>
             <details class="statistics-commands"><summary>一键复现实验命令</summary><pre id="statisticsCommands" class="console"></pre></details>
           </section>
         </section>
@@ -1058,6 +1079,7 @@
       </main>
     </div>
     <script src="/static/asset_ui.js" defer></script>
+    <script src="/static/statistics.js" defer></script>
     <script src="/static/app.js" defer></script>
   </body>
 </html>

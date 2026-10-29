@@ -7,6 +7,7 @@ instead of treating Python wall-clock time as RFID latency.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import math
 from typing import Any, Mapping
 
 
@@ -19,6 +20,10 @@ class CostModel:
     slot_ms: float = 0.0
     frame_ms: float = 30.0
     round_ms: float = 0.0
+
+    def __post_init__(self):
+        if any(not math.isfinite(v) or v < 0 for v in self.to_dict().values()):
+            raise ValueError("cost coefficients must be finite and non-negative")
 
     def estimate_ms(self, *, reader_bits: int, tag_bits: int, slots: int, frames: int, rounds: int) -> float:
         return round(
@@ -47,8 +52,32 @@ class TaskSpec:
     top_k: int = 3
     missing_rate: float = 0.0
     noise_rate: float = 0.0
+    extreme_rate: float = 0.0
     seed: int = 0
     relative_tolerance: float = 0.05
+    split: str = "evaluation"
+
+    def __post_init__(self):
+        if any(type(v) is not int for v in (self.num_tags, self.price_min, self.price_max, self.top_k, self.seed)):
+            raise ValueError("population, domain, top_k and seed must be integers")
+        if not self.tasks or any(t not in {"mean", "variance", "cardinality", "top_k"} for t in self.tasks):
+            raise ValueError("unsupported or empty task list")
+        if len(set(self.tasks)) != len(self.tasks):
+            raise ValueError("duplicate tasks")
+        if not 0 <= self.num_tags <= 200000 or self.price_min > self.price_max:
+            raise ValueError("invalid population or value bounds")
+        if self.price_max - self.price_min + 1 > 10000:
+            raise ValueError("value domain exceeds 10000 bins")
+        if self.price_min < 0 or self.price_max >= 2 ** 31:
+            raise ValueError("value domain must fit non-negative signed 32-bit fields")
+        if not 1 <= self.top_k <= self.price_max - self.price_min + 1:
+            raise ValueError("invalid top_k")
+        if self.seed < 0 or not 0 <= self.relative_tolerance <= 1:
+            raise ValueError("invalid seed or tolerance")
+        if any(not 0 <= v <= 1 for v in (self.missing_rate, self.noise_rate, self.extreme_rate)):
+            raise ValueError("rates must be in [0, 1]")
+        if self.distribution not in {"single_peak", "multi_peak", "gaussian", "long_tail", "power_law", "uniform"}:
+            raise ValueError("unsupported distribution")
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -97,6 +126,12 @@ class RunResult:
     cpu_time_ms: float = 0.0
     metadata: Mapping[str, Any] = field(default_factory=dict)
     failure_reason: str = ""
+
+    def __post_init__(self):
+        if any(type(v) is not int or v < 0 for v in (self.reader_bits, self.tag_bits, self.slots, self.frames, self.rounds, self.seed)):
+            raise ValueError("communication counters and seed must be non-negative integers")
+        if not math.isfinite(self.cpu_time_ms) or self.cpu_time_ms < 0:
+            raise ValueError("cpu_time_ms must be finite and non-negative")
 
     @property
     def communication_bits(self) -> int:
