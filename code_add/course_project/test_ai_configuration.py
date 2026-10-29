@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from backend_tools.openai_compatible import LLMClientError, LLMConfig, OpenAICompatibleClient
+from ai_protocol_optimizer import _build_optimizer_prompt, validate_task_profile
 from course_project import web_app
 from course_project.test_infrastructure import HTTPTestServer
 
@@ -114,6 +115,38 @@ class LiveConfigurationTests(HTTPTestServer):
 
 
 class GatewayConfigurationTests(unittest.TestCase):
+    def test_custom_task_requires_text_and_is_embedded_in_prompt(self):
+        with self.assertRaises(ValueError):
+            validate_task_profile("custom_task", "短")
+        text = "估计标签 price 的 90 分位数，返回 [estimated_p90]，误差不超过 5%。"
+        self.assertEqual(validate_task_profile("custom_task", text), "custom_task")
+        prompt = _build_optimizer_prompt(
+            scene_name="test",
+            parent_a="ModeQuerySEM",
+            parent_b="ModeQueryTKQ",
+            protocol_name="CustomProtocol",
+            task_profile="custom_task",
+            custom_task_text=text,
+        )
+        self.assertIn(text, prompt)
+        self.assertIn("任意自定义任务", prompt)
+
+    def test_custom_validation_reports_execution_scope_without_fake_accuracy(self):
+        result = web_app.validate_selfopt_protocol(
+            {
+                "scene": "test",
+                "protocol": "ModeQuerySEM",
+                "task_profile": "custom_task",
+                "custom_task_text": "统计标签价格的 90 分位数并返回列表结果",
+                "num_tags": 20,
+                "total_runs": 1,
+            }
+        )
+        self.assertEqual(result["semantic_validation"], "not_available")
+        self.assertEqual(result["validation_scope"], "execution_and_output_contract")
+        self.assertEqual(result["task_profile"], "custom_task")
+        self.assertTrue(result["samples"][0]["hit"])
+
     def test_web_ignores_legacy_environment_and_endpoint_settings(self):
         with patch.dict(os.environ, {"AI_API_BASE_URL": "https://old.invalid", "AI_API_MODEL": "old-model", "AI_API_ENDPOINT_PATH": "/wrong", "GEEK_API_KEY": "old-key"}):
             config = web_app._web_llm_config({"base_url": "https://new.example/v1", "model": "new-model", "api_key_value": "new-key", "endpoint_path": "/wrong", "api_key_env": "GEEK_API_KEY"})

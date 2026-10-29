@@ -377,6 +377,10 @@
                     <label>任务画像</label
                     ><select id="taskProfile"></select>
                   </div>
+                  <div id="customTaskField" class="field-span" style="display: none">
+                    <label>自定义任务说明</label>
+                    <textarea id="customTaskText" rows="4" placeholder="描述输入数据、统计目标、输出格式、精度和通信约束。例如：估计标签 price 的 90 分位数，返回 [estimated_p90]，误差不超过 5%。"></textarea>
+                  </div>
                   <div>
                     <label>父代 A</label
                     ><select id="aiParentA"></select>
@@ -561,6 +565,10 @@
                   <label>任务画像</label
                   ><select id="validateTaskProfile"></select>
                 </div>
+                <div id="validateCustomTaskField" class="field-span" style="display: none">
+                  <label>自定义任务说明</label>
+                  <textarea id="validateCustomTaskText" rows="3" placeholder="填写该协议需要完成的任意任务；此模式执行结构校验，不虚构通用业务真值。"></textarea>
+                </div>
                 <div>
                   <label>协议</label
                   ><select id="validateProtocol"></select>
@@ -639,6 +647,10 @@
                 <div>
                   <label>任务画像</label
                   ><select id="iterateTaskProfile"></select>
+                </div>
+                <div id="iterateCustomTaskField" class="field-span" style="display: none">
+                  <label>自定义任务说明</label>
+                  <textarea id="iterateCustomTaskText" rows="3" placeholder="描述每轮生成协议必须满足的自定义任务。"></textarea>
                 </div>
                 <div>
                   <label>协议前缀</label
@@ -829,6 +841,10 @@
                 <div>
                   <label>任务画像</label
                   ><select id="expTaskProfile"></select>
+                </div>
+                <div id="expCustomTaskField" class="field-span" style="display: none">
+                  <label>自定义任务说明</label>
+                  <textarea id="expCustomTaskText" rows="3" placeholder="说明实验要比较的自定义任务；没有固定真值时将展示执行与结构指标。"></textarea>
                 </div>
                 <div>
                   <label>实验因素</label

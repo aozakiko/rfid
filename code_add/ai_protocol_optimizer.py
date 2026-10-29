@@ -51,7 +51,31 @@ TASK_GUIDANCE = {
         "output": "返回疑似存在或疑似缺失的目标集合摘要，可用整数列表表示候选 ID/桶编号。",
         "objective": "在大量标签缺失或遮挡时利用碰撞信息进行快速库存盘点与缺失检测。",
     },
+    "custom_task": {
+        "title": "任意自定义任务",
+        "output": "严格按照用户给出的输出契约返回结果；系统会验证协议是否可执行及物理约束，不对未知业务指标强行套用固定真值。",
+        "objective": "由用户用自然语言定义统计目标、输入属性、输出格式、精度要求和通信约束。",
+    },
 }
+
+CUSTOM_TASK_PROFILE = "custom_task"
+
+
+def validate_task_profile(task_profile: str, custom_task_text: str | None = None) -> str:
+    profile = str(task_profile or "mode_query").strip()
+    if profile not in TASK_GUIDANCE:
+        raise ValueError(f"未知任务画像: {profile}")
+    if profile == CUSTOM_TASK_PROFILE and len(str(custom_task_text or "").strip()) < 8:
+        raise ValueError("选择“任意自定义任务”时，请至少填写 8 个字符的任务说明")
+    return profile
+
+
+def task_guidance(task_profile: str, custom_task_text: str | None = None) -> dict[str, str]:
+    profile = validate_task_profile(task_profile, custom_task_text)
+    guidance = dict(TASK_GUIDANCE[profile])
+    if profile == CUSTOM_TASK_PROFILE:
+        guidance["custom_text"] = str(custom_task_text or "").strip()
+    return guidance
 
 
 def _log(message: str, logger) -> None:
@@ -107,6 +131,7 @@ def _build_optimizer_prompt(
     parent_b: str,
     protocol_name: str,
     task_profile: str = "mode_query",
+    custom_task_text: str | None = None,
     requirement_text: str | None = None,
     repair_feedback: str | None = None,
     previous_code: str | None = None,
@@ -115,7 +140,7 @@ def _build_optimizer_prompt(
     if errors or base_prompt is None:
         raise ValueError("; ".join(errors or ["无法构造交叉提示词。"]))
 
-    task = TASK_GUIDANCE.get(task_profile, TASK_GUIDANCE["mode_query"])
+    task = task_guidance(task_profile, custom_task_text)
     requirement_block = requirement_text.strip() if requirement_text and requirement_text.strip() else "用户未提供额外自然语言需求，请根据任务画像和父代协议自行设计。"
 
     extra_requirements = f"""
@@ -125,6 +150,7 @@ def _build_optimizer_prompt(
 - 优化目标：{task['objective']}
 - 输出约定：{task['output']}
 - 用户需求：{requirement_block}
+{f'- 自定义任务说明（必须遵守）：{task["custom_text"]}' if task_profile == CUSTOM_TASK_PROFILE else ''}
 
 平台定位：
 本平台不是只面向众数查询，而是面向多维统计场景的 RFID 协议自优化平台。你需要把父代协议中的时隙帧、碰撞利用、位图/草图估计、自适应帧长、分批验证等机制抽象成可复用的协议基因，并针对当前任务画像生成可执行的专用协议。
@@ -238,6 +264,8 @@ def _single_value_hit(estimated: list[Any], target: list[Any], *, relative_toler
 
 
 def _target_values_for_profile(tags: list[Any], true_info: dict[str, Any], task_profile: str) -> list[Any]:
+    if task_profile == CUSTOM_TASK_PROFILE:
+        return []
     values = _numeric_attribute_values(tags)
     if task_profile == "mode_query":
         return list(true_info.get("modes", []))
@@ -285,7 +313,9 @@ def _validate_protocol(
     scene_name: str,
     validate_num_tags: int,
     task_profile: str,
+    custom_task_text: str | None = None,
 ) -> dict[str, Any]:
+    task_profile = validate_task_profile(task_profile, custom_task_text)
     generate_tags, simulation_config = _load_scene_task(scene_name)
     price_min = int(simulation_config.get("PRICE_MIN", 1))
     price_max = int(simulation_config.get("PRICE_MAX", 1000))
@@ -301,7 +331,15 @@ def _validate_protocol(
     estimated_values, metric, exec_time_ms, _ = protocol_instance.execute(smoke_tags, price_min, price_max)
     estimated_values = list(estimated_values or [])
     target_values = _target_values_for_profile(smoke_tags, true_info if isinstance(true_info, dict) else {}, task_profile)
-    smoke_hit, smoke_precision, smoke_recall = _profile_metrics(estimated_values, target_values, task_profile)
+    if task_profile == CUSTOM_TASK_PROFILE:
+        # There is no universal business truth for an arbitrary natural-language task.
+        # Treat a successfully executed list-shaped result as the smoke contract and
+        # report semantic accuracy as unavailable instead of inventing a target.
+        smoke_hit = isinstance(estimated_values, list)
+        smoke_precision = None
+        smoke_recall = None
+    else:
+        smoke_hit, smoke_precision, smoke_recall = _profile_metrics(estimated_values, target_values, task_profile)
 
     return {
         "is_valid": bool(is_valid),
@@ -318,7 +356,10 @@ def _validate_protocol(
         "metric": metric,
         "exec_time_ms": exec_time_ms,
         "task_profile": task_profile,
-        "task_title": TASK_GUIDANCE.get(task_profile, TASK_GUIDANCE["mode_query"])["title"],
+        "task_title": task_guidance(task_profile, custom_task_text)["title"],
+        "custom_task_text": str(custom_task_text or "").strip() if task_profile == CUSTOM_TASK_PROFILE else "",
+        "semantic_validation": "not_available" if task_profile == CUSTOM_TASK_PROFILE else "evaluated",
+        "validation_scope": "execution_and_output_contract" if task_profile == CUSTOM_TASK_PROFILE else "execution_and_semantic_target",
     }
 
 
@@ -344,8 +385,10 @@ def run_ai_optimization_workflow(
     retry_attempts: int = 3,
     task_profile: str = "mode_query",
     requirement_text: str | None = None,
+    custom_task_text: str | None = None,
     logger=print,
 ) -> dict[str, Any]:
+    task_profile = validate_task_profile(task_profile, custom_task_text)
     scene_path = PROJECT_ROOT / scene_name
     if not scene_path.exists():
         raise FileNotFoundError(f"场景不存在: {scene_path}")
@@ -363,6 +406,7 @@ def run_ai_optimization_workflow(
         protocol_name=protocol_name,
         task_profile=task_profile,
         requirement_text=requirement_text,
+        custom_task_text=custom_task_text,
     )
     prompt_file.write_text(initial_prompt, encoding="utf-8")
     _log(f"已生成 AI 优化提示词: {prompt_file}", logger)
@@ -409,6 +453,7 @@ def run_ai_optimization_workflow(
             protocol_name=protocol_name,
             task_profile=task_profile,
             requirement_text=requirement_text,
+            custom_task_text=custom_task_text,
             repair_feedback=repair_feedback,
             previous_code=previous_code,
         )
@@ -424,10 +469,14 @@ def run_ai_optimization_workflow(
         _log(f"已写入候选协议: {target_file}", logger)
 
         _log("正在执行协议物理约束、任务烟测和信息隔离验证。", logger)
-        last_validation = _validate_protocol(target_file, protocol_name, scene_name, validate_num_tags, task_profile)
+        last_validation = _validate_protocol(
+            target_file, protocol_name, scene_name, validate_num_tags, task_profile, custom_task_text
+        )
         _log(last_validation["report"], logger)
+        precision_text = "n/a" if last_validation["smoke_precision"] is None else f"{last_validation['smoke_precision']:.3f}"
+        recall_text = "n/a" if last_validation["smoke_recall"] is None else f"{last_validation['smoke_recall']:.3f}"
         _log(
-            f"任务烟测: hit={last_validation['smoke_hit']} precision={last_validation['smoke_precision']:.3f} recall={last_validation['smoke_recall']:.3f} estimated={last_validation['estimated_values']} target={last_validation['target_values']} time_ms={last_validation['exec_time_ms']:.2f}",
+            f"任务烟测: hit={last_validation['smoke_hit']} precision={precision_text} recall={recall_text} estimated={last_validation['estimated_values']} target={last_validation['target_values']} time_ms={last_validation['exec_time_ms']:.2f}",
             logger,
         )
         if not last_validation["information_isolation_passed"]:
@@ -450,7 +499,7 @@ def run_ai_optimization_workflow(
         repair_feedback = (
             last_validation["report"]
             + "\n"
-            + f"任务烟测命中: {last_validation['smoke_hit']}，precision={last_validation['smoke_precision']:.3f}，recall={last_validation['smoke_recall']:.3f}，estimated_values={last_validation['estimated_values']}，target_values={last_validation['target_values']}"
+            + f"任务烟测命中: {last_validation['smoke_hit']}，precision={last_validation['smoke_precision']}，recall={last_validation['smoke_recall']}，estimated_values={last_validation['estimated_values']}，target_values={last_validation['target_values']}"
         )
         _log("候选协议未完全通过，准备进入自修复轮次。", logger)
 
@@ -484,6 +533,7 @@ def main() -> int:
     parser.add_argument("--max-repair-rounds", type=int, default=1, help="最大自修复轮数")
     parser.add_argument("--task-profile", default="mode_query", choices=sorted(TASK_GUIDANCE), help="协议任务画像")
     parser.add_argument("--requirement-text", default=None, help="额外自然语言需求")
+    parser.add_argument("--custom-task-text", default=None, help="任意自定义任务说明（task-profile=custom_task 时必填）")
     parser.add_argument("--dry-run", action="store_true", help="仅生成提示词和目标路径，不调用 API")
     parser.add_argument("--list-models", action="store_true", help="仅调用 /v1/models 列出模型")
     args = parser.parse_args()
@@ -531,6 +581,7 @@ def main() -> int:
             dry_run=args.dry_run,
             task_profile=args.task_profile,
             requirement_text=args.requirement_text,
+            custom_task_text=args.custom_task_text,
             logger=print,
         )
     except (ValueError, FileNotFoundError, ImportError, AttributeError, LLMClientError) as exc:

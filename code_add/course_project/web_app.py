@@ -23,7 +23,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_protocol_optimizer import TASK_GUIDANCE, run_ai_optimization_workflow
+from ai_protocol_optimizer import (
+    CUSTOM_TASK_PROFILE,
+    TASK_GUIDANCE,
+    run_ai_optimization_workflow,
+    task_guidance,
+    validate_task_profile,
+)
 from backend_tools.openai_compatible import LLMClientError, LLMConfig, OpenAICompatibleClient
 from prompt_generation import create_crossover_prompts
 from Validator import ProtocolValidator
@@ -414,7 +420,7 @@ def selfopt_state() -> dict[str, Any]:
             "name": "面向多维统计场景的 RFID 协议自优化 Web 平台",
             "source": "2025 年大学生创新创业训练计划项目申报书",
             "summary": "平台目标是把 RFID 协议设计从人工推导升级为智能生成，支持自然语言需求、GRDL 建模、扩展父代协议基因库、LLM 进化生成、在线仿真沙箱与三重正确性验证。",
-            "statistics": ["mode_query", "mean_estimation", "variance_estimation", "median_quantile", "cardinality_estimation", "missing_stocktaking"],
+            "statistics": ["mode_query", "mean_estimation", "variance_estimation", "median_quantile", "cardinality_estimation", "missing_stocktaking", CUSTOM_TASK_PROFILE],
             "validation": ["功能逻辑验证", "物理约束验证", "信息隔离验证"],
             "domains": ["智能制造", "供应链管理", "智慧医疗", "工业传感监测", "库存盘点", "质量分布评估"],
         },
@@ -665,6 +671,8 @@ def _load_protocol_instance(protocol_file: Path, protocol_name: str):
 
 
 def _target_values_for_profile(tags: list[Any], true_info: dict[str, Any], task_profile: str, payload: dict[str, Any]) -> list[float]:
+    if task_profile == CUSTOM_TASK_PROFILE:
+        return []
     prices = [float(getattr(tag, "price", 0.0)) for tag in tags]
     if not prices:
         return [0.0]
@@ -700,7 +708,11 @@ def _estimated_values(raw: Any) -> list[float]:
     return []
 
 
-def _profile_hit(estimated: list[float], target: list[float], task_profile: str, payload: dict[str, Any]) -> bool:
+def _profile_hit(estimated: list[float], target: list[float], task_profile: str, payload: dict[str, Any], raw_result: Any = None) -> bool:
+    if task_profile == CUSTOM_TASK_PROFILE:
+        # Custom tasks have no universal ground-truth calculator. The generic
+        # validation contract is successful execution with a list-shaped result.
+        return isinstance(raw_result, (list, tuple, set))
     if not estimated or not target:
         return False
     if task_profile == "mode_query":
@@ -716,8 +728,8 @@ def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
     scene = _validate_scene(str(payload.get("scene") or build_catalog()["defaults"]["scene"]))
     protocol = _validate_identifier(str(payload.get("protocol") or ""), "协议名称")
     task_profile = str(payload.get("task_profile") or "mode_query")
-    if task_profile not in TASK_GUIDANCE:
-        raise ValueError(f"未知任务画像: {task_profile}")
+    custom_task_text = str(payload.get("custom_task_text") or "").strip()
+    validate_task_profile(task_profile, custom_task_text)
     protocol_file = _find_protocol_file(scene, protocol, include_base=True)
     information_isolation = _scan_information_isolation(protocol_file)
     generate_tags, task_config = _load_scene_task(scene)
@@ -745,7 +757,7 @@ def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
             break
         target = _target_values_for_profile(tags, true_info if isinstance(true_info, dict) else {}, task_profile, payload)
         estimated = _estimated_values(raw_values)
-        hit = _profile_hit(estimated, target, task_profile, payload)
+        hit = _profile_hit(estimated, target, task_profile, payload, raw_values)
         passed_runs += int(hit)
         completed_runs += 1
         total_time += float(exec_time_ms or 0.0)
@@ -768,7 +780,10 @@ def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         "scene": scene,
         "protocol": protocol,
         "task_profile": task_profile,
-        "task_title": TASK_GUIDANCE[task_profile]["title"],
+        "task_title": task_guidance(task_profile, custom_task_text)["title"],
+        "custom_task_text": custom_task_text if task_profile == CUSTOM_TASK_PROFILE else "",
+        "semantic_validation": "not_available" if task_profile == CUSTOM_TASK_PROFILE else "evaluated",
+        "validation_scope": "execution_and_output_contract" if task_profile == CUSTOM_TASK_PROFILE else "execution_and_semantic_target",
         "protocol_path": _relative_to_project(protocol_file),
         "validator_passed": bool(is_valid),
         "validator_report": report,
@@ -806,8 +821,8 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
     parent_a = _validate_identifier(str(payload.get("parent_a") or ""), "父代 A")
     parent_b = _validate_identifier(str(payload.get("parent_b") or ""), "父代 B")
     task_profile = str(payload.get("task_profile") or "mode_query")
-    if task_profile not in TASK_GUIDANCE:
-        raise ValueError(f"未知任务画像: {task_profile}")
+    custom_task_text = str(payload.get("custom_task_text") or "").strip()
+    validate_task_profile(task_profile, custom_task_text)
     protocol_name = _default_protocol_name_for_task(payload.get("protocol_name") or "web_ai_candidate", task_profile)
     target_generation = str(payload.get("target_generation") or "next")
     run_mode = str(payload.get("run_mode") or "generate").strip()
@@ -869,6 +884,7 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
         retry_attempts=retry_attempts,
         task_profile=task_profile,
         requirement_text=requirement_text,
+            custom_task_text=custom_task_text,
         logger=lambda message: emit(
             str(message),
             progress=workflow_progress(str(message))[0],
@@ -877,7 +893,7 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
     )
     emit(f"AI 任务返回状态: {result.get('status')}", progress=96, stage="persisting")
     result["task_profile"] = task_profile
-    result["task_title"] = TASK_GUIDANCE[task_profile]["title"]
+    result["task_title"] = task_guidance(task_profile, custom_task_text)["title"]
     request = {
         "scene": scene,
         "parent_a": parent_a,
@@ -886,6 +902,7 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
         "target_generation": target_generation,
         "dry_run": dry_run,
         "task_profile": task_profile,
+        "custom_task_text": custom_task_text if task_profile == CUSTOM_TASK_PROFILE else "",
         "run_mode": "preview" if dry_run else "generate",
     }
     job_id = store_ai_job(request=request, result=result, logs=logs)
@@ -1013,8 +1030,8 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
         raise ValueError(f"场景 {scene} 中找不到协议: {', '.join(missing)}")
 
     task_profile = str(payload.get("task_profile") or "mode_query")
-    if task_profile not in TASK_GUIDANCE:
-        raise ValueError(f"未知任务画像: {task_profile}")
+    custom_task_text = str(payload.get("custom_task_text") or "").strip()
+    validate_task_profile(task_profile, custom_task_text)
     prefix = _default_iteration_prefix_for_task(payload.get("prefix") or "web_auto_iter", task_profile)
     iterations = _coerce_int(payload, "iterations", 3, 1, 12)
     dry_run = boolean_value(payload, "dry_run", True)
@@ -1092,10 +1109,11 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             retry_attempts=retry_attempts,
             task_profile=task_profile,
             requirement_text=requirement_text,
+            custom_task_text=custom_task_text,
             logger=iter_log,
         )
         result["task_profile"] = task_profile
-        result["task_title"] = TASK_GUIDANCE[task_profile]["title"]
+        result["task_title"] = task_guidance(task_profile, custom_task_text)["title"]
         request = {
             "scene": scene,
             "parent_a": parent_a,
@@ -1104,6 +1122,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             "target_generation": target_generation,
             "dry_run": dry_run,
             "task_profile": task_profile,
+            "custom_task_text": custom_task_text if task_profile == CUSTOM_TASK_PROFILE else "",
         }
         job_id = store_ai_job(request=request, result=result, logs=logs)
         item = {
@@ -1134,6 +1153,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
         "prefix": prefix,
         "dry_run": dry_run,
         "task_profile": task_profile,
+        "custom_task_text": custom_task_text if task_profile == CUSTOM_TASK_PROFILE else "",
         "iterations": results,
         "wall_clock_s": round(time.perf_counter() - started, 3),
         "state": selfopt_state(),
@@ -1171,6 +1191,7 @@ def _protocol_metrics_for_scene(
     protocol: str,
     *,
     task_profile: str,
+    custom_task_text: str = "",
     num_tags: int,
     total_runs: int = 2,
 ) -> dict[str, Any]:
@@ -1179,6 +1200,7 @@ def _protocol_metrics_for_scene(
             "scene": scene,
             "protocol": protocol,
             "task_profile": task_profile,
+            "custom_task_text": custom_task_text,
             "num_tags": num_tags,
             "total_runs": total_runs,
             "relative_tolerance": 0.2,
@@ -1195,8 +1217,8 @@ def _protocol_metrics_for_scene(
 def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Path, str]:
     scene_name = _validate_scene(scene)
     task_profile = str(payload.get("task_profile") or "mode_query")
-    if task_profile not in TASK_GUIDANCE:
-        raise ValueError(f"未知任务画像: {task_profile}")
+    custom_task_text = str(payload.get("custom_task_text") or "").strip()
+    validate_task_profile(task_profile, custom_task_text)
     output_dir = _safe_experiment_output_dir(payload.get("output_dir"))
     data_path = output_dir / f"evolution_scene_{scene_name}.json"
     num_tags = _coerce_int(payload, "num_tags", 60, 20, 5000)
@@ -1223,6 +1245,7 @@ def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Pat
                     scene_name,
                     file_path.stem,
                     task_profile=task_profile,
+                    custom_task_text=custom_task_text,
                     num_tags=num_tags,
                     total_runs=total_runs,
                 )
@@ -1273,8 +1296,8 @@ def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Pat
 def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
     scene_name = _validate_scene(scene)
     task_profile = str(payload.get("task_profile") or "mode_query")
-    if task_profile not in TASK_GUIDANCE:
-        raise ValueError(f"未知任务画像: {task_profile}")
+    custom_task_text = str(payload.get("custom_task_text") or "").strip()
+    validate_task_profile(task_profile, custom_task_text)
     output_dir = _safe_experiment_output_dir(payload.get("output_dir"))
     csv_path = output_dir / f"final_comparison_{scene_name}.csv"
     num_tags = _coerce_int(payload, "num_tags", 60, 20, 5000)
@@ -1295,6 +1318,7 @@ def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
                 scene_name,
                 name,
                 task_profile=task_profile,
+                custom_task_text=custom_task_text,
                 num_tags=num_tags,
                 total_runs=total_runs,
             )
@@ -1339,8 +1363,8 @@ def _run_command(command: list[str], *, timeout: int = 600, env_overrides: dict[
 def run_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
     task = str(payload.get("task") or "robust").strip()
     task_profile = str(payload.get("task_profile") or "mode_query").strip()
-    if task_profile not in TASK_GUIDANCE:
-        raise ValueError(f"未知任务画像: {task_profile}")
+    custom_task_text = str(payload.get("custom_task_text") or "").strip()
+    validate_task_profile(task_profile, custom_task_text)
     timeout = _coerce_int(payload, "timeout_seconds", 600, 30, 7200)
     env = {"MPLBACKEND": "Agg"}
     if task == "robust":
@@ -1434,7 +1458,8 @@ def run_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
     return result | {
         "task": task,
         "task_profile": task_profile,
-        "task_title": TASK_GUIDANCE[task_profile]["title"],
+        "task_title": task_guidance(task_profile, custom_task_text)["title"],
+        "custom_task_text": custom_task_text if task_profile == CUSTOM_TASK_PROFILE else "",
         "artifacts": _experiment_artifact_rows(),
     }
 

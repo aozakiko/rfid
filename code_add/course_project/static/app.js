@@ -226,6 +226,16 @@ function taskInfo(key) {
     }
   );
 }
+function customTaskTextFor(prefix) {
+  const id = prefix === "ai" ? "customTaskText" : `${prefix}CustomTaskText`;
+  return $(id)?.value?.trim() || "";
+}
+function renderCustomTaskFields() {
+  [["taskProfile", "customTaskField"], ["validateTaskProfile", "validateCustomTaskField"], ["iterateTaskProfile", "iterateCustomTaskField"], ["expTaskProfile", "expCustomTaskField"]].forEach(([selectId, fieldId]) => {
+    const field = $(fieldId);
+    if (field) field.style.display = $(selectId)?.value === "custom_task" ? "block" : "none";
+  });
+}
 function taskSlug(id) {
   return String(id || "mode_query").replace(/[^A-Za-z0-9_]/g, "_");
 }
@@ -268,6 +278,7 @@ function renderTaskProfileInfo() {
     $("iterateTaskProfileInfo").innerHTML =
       `<b>任务画像：</b>${esc(it.title)}<br><b>自动迭代会使用该画像生成 Prompt、命名协议并执行验证。</b><br>${esc(it.objective)}`;
   renderExperimentTaskExplain();
+  renderCustomTaskFields();
 }
 function fillTaskProfiles() {
   const opts = taskProfileOptions();
@@ -808,6 +819,7 @@ function aiRequest(mode) {
     target_generation: $("aiTargetGeneration").value,
     run_mode: mode,
     task_profile: $("taskProfile").value,
+    custom_task_text: customTaskTextFor("ai"),
     requirement_text: $("requirementText").value,
     max_repair_rounds: Number($("aiRepairRounds").value || 0),
     ...llmPayload(),
@@ -1075,6 +1087,7 @@ async function runValidate() {
         scene: state.selectedScene,
         protocol: $("validateProtocol").value,
         task_profile: $("validateTaskProfile").value,
+        custom_task_text: customTaskTextFor("validate"),
         num_tags: Number($("validateNumTags").value),
         total_runs: Number($("validateRuns").value),
         price_min: Number($("validatePriceMin").value),
@@ -1153,6 +1166,7 @@ async function runIteration() {
       iterations: Number($("iterateCount").value),
       dry_run: $("iteratePreviewOnly").checked,
       task_profile: $("iterateTaskProfile").value,
+      custom_task_text: customTaskTextFor("iterate"),
       requirement_text: $("iterateRequirementText").value,
       max_repair_rounds: Number($("iterateRepairRounds").value),
       ...llmPayload(),
@@ -1229,6 +1243,7 @@ async function runExperiment(task, button = null) {
       protocols: $("expProtocolSpec").value,
       factors: selectedValues("expFactors").join(",") || "density",
       task_profile: $("expTaskProfile").value,
+      custom_task_text: customTaskTextFor("exp"),
       num_tags: Number($("expNumTags").value),
       total_runs: Number($("expTotalRuns").value),
       point_count: Number($("expPointCount").value),
@@ -1521,11 +1536,12 @@ function bind() {
     updateNamesForTask(true);
     renderTaskProfileInfo();
   };
+  $("validateTaskProfile").onchange = renderTaskProfileInfo;
   $("iterateTaskProfile").onchange = () => {
     updateNamesForTask(true);
     renderTaskProfileInfo();
   };
-  $("expTaskProfile").onchange = renderExperimentTaskExplain;
+  $("expTaskProfile").onchange = renderTaskProfileInfo;
   $("expScene").onchange = fillExperimentControls;
   $("expProtocol").onchange = updateExperimentProtocolSpec;
   $("runRobustExp").onclick = (e) => runExperiment("robust", e.currentTarget);
