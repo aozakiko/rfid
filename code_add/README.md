@@ -75,3 +75,5 @@ python course_project/build_iot_course_report_v2.py
 ## 统计协议与通信成本实验
 
 刘滕飞负责的统计协议实现位于 [`stat_protocols/`](stat_protocols/README.md)，可复现实验位于 [`benchmark/`](benchmark/README.md)。统一 `RunResult` 会记录 reader/tag bits、slots、frames、rounds、seed、误差和失败原因；主实验、共享草图消融与通信/误差 Pareto 结果可由固定命令一键生成。
+
+启动 Web 服务后，打开 [统计基准页](http://127.0.0.1:8765/#statistics) 可直接筛选并预览这些结果，页面同时提供与分工文档逐项对照的验收清单。

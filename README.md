@@ -126,7 +126,15 @@ API Key 仅在当前页面使用，不写入浏览器本地存储、配置文件
 
 下方的实验资产列表支持搜索和分页；点击“本页预览”查看图表、CSV、JSON 或报告。`Experiments/` 下的嵌套产物也会被扫描。
 
-### 3.8 审计
+### 3.8 统计基准
+
+“统计基准”是刘滕飞统计协议与算法实验的可视化入口。页面支持按主实验/消融实验、任务、数据分布和标签规模筛选，展示通信量—误差散点图、协议成功率、reader/tag bits、slots、frames、rounds 和失败数量。
+
+页面右侧会列出 `main_reports.json`、`ablation_reports.json`、Pareto JSON、汇总 CSV 以及 PNG/PDF 图表，点击资产名称即可在页面内预览。底部的“与分工文档逐项对照”会核对统一 `RunResult`、同分布/seed/规模、通信成本主指标、基线、负结果和主/消融/Pareto 产物。
+
+直接访问：<http://127.0.0.1:8765/#statistics>。
+
+### 3.9 审计
 
 ![模型配置状态与 AI 任务记录](docs/screenshots/08-audit.png)
 
