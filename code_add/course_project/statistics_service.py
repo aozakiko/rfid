@@ -74,7 +74,7 @@ def dashboard():
         dict(key="robustness", title="W7–8：规模、缺失、长尾和正式实验", status="complete" if len(dimensions["seeds"]) >= 20 and len(dimensions["scales"]) >= 3 else "partial", evidence=f"{len(dimensions['seeds'])} 个 seed；5 分布；缺失/噪声/极端值；独立盲测；95% CI/P95/最坏值"),
         dict(key="experiments", title="5.3.5 / W8：主实验、消融与 Pareto 图", status="complete" if all(k in modes for k in MODES) else "partial", evidence="同任务内计算 Pareto；失败/不可用候选排除出前沿并单独展示"),
         dict(key="paper", title="W9–10：算法章节、图表校对、交付", status="complete", evidence="自动报告、机制表、H1/H2 验收、复现命令、原始 CSV/JSON 与四组 PNG/PDF"),
-        dict(key="integration", title="最终集成：演化 / 隔离验证接口", status="other_owner", evidence="陈涛：选择、谱系、反馈修复及 H3；严枭：安全沙箱/物理与隔离证明；统计白名单编译器已提供"),
+        dict(key="integration", title="扩展验证接口", status="out_of_scope", evidence="演化选择、运行时沙箱和物理隔离需要独立模块验证；统计白名单编译器和评价接口已提供"),
     ]
     root = current_root()
     data["delivery_artifacts"] = [dict(name=p.name, path=_relative(p), size=p.stat().st_size, kind=p.suffix[1:]) for p in sorted(root.glob("*")) if p.is_file() and p.name != "dashboard.json"]

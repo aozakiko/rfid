@@ -79,7 +79,7 @@ class StatisticalProtocolContractTests(unittest.TestCase):
         self.assertEqual(len(state["dimensions"]["seeds"]), 20)
         coverage = {item["key"]: item for item in state["coverage"]}
         self.assertEqual(coverage["recheck"]["status"], "complete")
-        self.assertEqual(coverage["integration"]["status"], "other_owner")
+        self.assertEqual(coverage["integration"]["status"], "out_of_scope")
         expected_llm = "measured" if state["manifest"]["llm_status"] == "record_supplied" else "needs_model"
         self.assertEqual(coverage["llm"]["status"], expected_llm)
 

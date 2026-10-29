@@ -97,7 +97,7 @@ def hypothesis_results(report_sets):
             savings = [1 - other[s].communication_bits / fixed[s].communication_bits for s in seeds]
             low, high = mean_ci(loss)
             h2.append(dict(distribution=distribution, num_tags=size, protocol=strategy, seeds=len(seeds), f1=mean(other[s].f1 for s in seeds), f1_loss=mean(loss), loss_ci95_low=low, loss_ci95_high=high, communication_saving=mean(savings), target_passed=high <= .01 and mean(savings) >= .2))
-    return {"H1": h1, "H2": h2, "H3": {"status": "other_owner", "owner": "陈涛", "reason": "演化选择、交叉与验证反馈修复不能用本统计基准的随机参数对照代替"}}
+    return {"H1": h1, "H2": h2, "H3": {"status": "out_of_scope", "reason": "演化选择、交叉与验证反馈修复不能用本统计基准的随机参数对照代替"}}
 
 
 def make_dashboard(report_sets, manifest, hypotheses, inventory):
@@ -181,7 +181,7 @@ def write_report(output, manifest, hypotheses, inventory):
         for row in manifest.get("llm_summary", []):
             error = f"{row['mean_error']:.6f}" if row['mean_error'] is not None else "不可用"
             llm_evidence += f"| {row['task']} | {row['runs'] - row['failed_runs']}/{row['runs']} | {row['quality_pass_rate']:.2%} | {error} | {row['mean_communication_bits']:.1f} |\n"
-    text = f'''# 刘滕飞交付核对与算法实验报告
+    text = f'''# 统计实验报告
 
 实验版本：{VERSION}。本报告由 `python -m benchmark.suite` 自动生成，原始结果及每个 seed 均可追溯。
 
@@ -223,7 +223,7 @@ H1 是 mean + variance + cardinality 的独立三任务实验；共享一次采�
 在“通信节省至少 15%、误差 CI 上界满足 5%/10%/5%”口径下，{passed_h1}/{len(hypotheses['H1'])} 个分布×规模×任务条件通过。原始逐条件表见 hypotheses.json。
 
 H2 使用逐 seed 配对的 F1 损失和通信节省。默认自适应阈值 1 相对 fixed_4，在“F1 损失 95% CI 上界 ≤ 1 个百分点、通信节省 ≥ 20%”下通过 {sum(r['target_passed'] for r in adaptive_h2)}/{len(adaptive_h2)} 个条件。
-未达到门槛的条件保留，不作“显著更优”的统一结论。H3 的选择/修复实验由陈涛演化模块负责；本交付提供统计编译和评价接口，不模拟其结果。
+未达到门槛的条件保留，不作“显著更优”的统一结论。H3 的选择/修复实验属于独立演化实验；本报告提供统计编译和评价接口，不模拟其结果。
 
 ## 局限与最终集成边界
 
@@ -232,7 +232,7 @@ H2 使用逐 seed 配对的 F1 损失和通信节省。默认自适应阈值 1 �
 3. 当前采用全帧复核；候选定向复核是后续扩展。整数值域已冻结为 1..1000，连续物理数据必须先声明量化规则。
 4. LLM对照只覆盖一份冻结候选；模型生成随机性、不同提示词和多候选统计仍未评估。缺少实际记录时明确待实测。
 5. 现有自由 Python 协议的成本未通过新通道插桩，不能凭其自报时间混入新 Pareto 图。
-6. AST/运行时沙箱、信息隔离证明归严枭；适应度、选择、谱系和验证修复归陈涛。待对接项在清单中单列，不冒充本人的研究结果。
+6. AST/运行时沙箱、信息隔离证明和演化选择需要独立模块验证；本统计实验不替代这些验证。
 
 ## 机制基因表
 
@@ -242,7 +242,7 @@ H2 使用逐 seed 配对的 F1 损失和通信节省。默认自适应阈值 1 �
     for row in inventory["mechanisms"]:
         text += f"| {row['title']} | `{row['path']}:{row['line']}` | {row['decision']} |\n"
     text += f"\n另已索引 {inventory['generation_count']} 个历史世代文件；完整 SHA-256 与机制关键词在 mechanism_inventory.json。tracked=false 为本地尚未提交的历史资产，不是随实验交付的执行依赖。关键词索引不等于正确性证明。\n"
-    (output / "刘滕飞交付报告.md").write_text(text, encoding="utf-8")
+    (output / "统计实验报告.md").write_text(text, encoding="utf-8")
 
 
 def run_suite(output, seed_count=20, sizes=(1000, 10000, 100000), llm_candidate=None, progress=print):
