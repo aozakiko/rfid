@@ -71,3 +71,7 @@ python course_project/build_iot_course_report_v2.py
 在“Prompt 与 AI”“验证沙盒”“自动迭代”和“Experiments”页面的“任务画像”下拉框中选择“任意自定义任务”，填写自然语言任务说明。建议同时写清：输入属性、统计或决策目标、返回值格式、误差/置信度要求，以及通信资源约束。例如：`估计标签 price 的 90 分位数，返回 [estimated_p90]，误差不超过 5%`。
 
 自定义说明会原样写入 AI Prompt，并随生成任务、迭代任务和实验记录保存。系统仍会检查 Python 协议接口、物理帧约束、执行是否成功以及 `estimated_values` 是否为列表；由于任意业务目标没有统一真值计算器，验证结果会标记为“执行与输出契约”，不会把它误算成众数、均值或固定精度指标。若需要业务准确率，请在 `Task.py` 中补充该任务的真值字段和对应验证逻辑。
+
+## 统计协议与通信成本实验
+
+刘滕飞负责的统计协议实现位于 [`stat_protocols/`](stat_protocols/README.md)，可复现实验位于 [`benchmark/`](benchmark/README.md)。统一 `RunResult` 会记录 reader/tag bits、slots、frames、rounds、seed、误差和失败原因；主实验、共享草图消融与通信/误差 Pareto 结果可由固定命令一键生成。

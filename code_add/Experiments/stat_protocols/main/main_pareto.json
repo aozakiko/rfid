@@ -1,0 +1,145 @@
+[
+  {
+    "protocol": "single_cardinality",
+    "task": "cardinality",
+    "runs": 75,
+    "success_rate": 1.0,
+    "mean_relative_error": 0.0,
+    "mean_f1": null,
+    "mean_communication_bits": 592064.0,
+    "p95_communication_bits": 1600064,
+    "failed_runs": 0
+  },
+  {
+    "protocol": "single_cardinality",
+    "task": "mean",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_cardinality",
+    "task": "top_k",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_cardinality",
+    "task": "variance",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_mean",
+    "task": "cardinality",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_mean",
+    "task": "top_k",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_mean",
+    "task": "variance",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_top_k",
+    "task": "cardinality",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_top_k",
+    "task": "mean",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_top_k",
+    "task": "variance",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_variance",
+    "task": "cardinality",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_variance",
+    "task": "mean",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  },
+  {
+    "protocol": "single_variance",
+    "task": "top_k",
+    "runs": 75,
+    "success_rate": 0.0,
+    "mean_relative_error": null,
+    "mean_f1": null,
+    "mean_communication_bits": 0.0,
+    "p95_communication_bits": 0,
+    "failed_runs": 75
+  }
+]
