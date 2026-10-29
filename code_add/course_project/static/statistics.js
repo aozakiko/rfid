@@ -94,7 +94,6 @@ function renderStatistics() {
   renderStatisticsTable(rows);
   renderStatisticsInsights(selected);
   renderStatisticsArtifacts();
-  renderStatisticsCoverage();
 }
 function drawStatisticsScatter(rows) {
   const metric = $("statisticsCostAxis").value;
@@ -151,7 +150,7 @@ function renderStatisticsInsights(selected) {
   const renderHypothesis = (name, rows) => rows.length ? `<div class="insight-card"><span>${name}：当前条件门槛通过</span><strong>${rows.filter((r) => r.target_passed).length} / ${rows.length}</strong><small>依据配对 seed 和 95% CI 上界判定；未通过条件保留。</small></div>` : '';
   $("statisticsInsights").innerHTML = renderHypothesis("H1 三任务共享", h1) + renderHypothesis("H2 自适应 vs 固定4轮", h2) +
     `<div class="insight-card"><span>研究边界</span><strong>软件匿名 OR 通道仿真</strong><small>发射 bits 与预留 slots 分别计量；大量空槽可能抵消 bits 优势。无真实硬件时延结论。</small></div>` +
-    `<div class="insight-card"><span>LLM 基线</span><strong>${state.statistics.manifest.llm_status === 'record_supplied' ? esc(state.statistics.manifest.llm_record?.model || '已提供候选记录') : '待配置模型实测'}</strong><small>${state.statistics.manifest.llm_record ? `一份冻结候选 · ${esc(state.statistics.manifest.llm_record.usage?.total_tokens ?? '用量未返回')} tokens · 在交付资产查看原始响应` : '随机参数对照不会冒充模型生成。'} 执行成功与精度达标分别报告。</small></div>` +
+    `<div class="insight-card"><span>LLM 基线</span><strong>${state.statistics.manifest.llm_status === 'record_supplied' ? esc(state.statistics.manifest.llm_record?.model || '已提供候选记录') : '待配置模型实测'}</strong><small>${state.statistics.manifest.llm_record ? `一份冻结候选 · ${esc(state.statistics.manifest.llm_record.usage?.total_tokens ?? '用量未返回')} tokens。` : '随机参数对照不会冒充模型生成。'} 执行成功与精度达标分别报告。</small></div>` +
     `<p class="mini-note">当前实验集：${esc($("statisticsMode").selectedOptions[0].textContent)}。${mode === 'blind' ? '盲测 seed 从100开始，调参使用的数据不进入此集合。' : '◇ 表示当前任务与筛选条件下的 Pareto 点。'}</p>`;
 }
 function statAssetButtons(artifacts) {
@@ -170,23 +169,6 @@ function renderStatisticsArtifacts() {
   const chart = artifacts.find((a) => a.kind === "png");
   $("statisticsChartImage").hidden = !chart;
   if (chart) $("statisticsChartImage").src = `/api/selfopt/raw?path=${encodeURIComponent(chart.path)}`;
-}
-function renderStatisticsCoverage() {
-  const coverage = state.statistics.coverage || [];
-  const complete = coverage.filter((r) => r.status === "complete" || r.status === "measured").length;
-  $("statisticsCoverageCount").textContent = `${complete} 已完成 · ${coverage.length - complete} 待实测/协作`;
-  const labels = { complete: "已完成", measured: "已测", partial: "部分", pending: "待补充", needs_model: "待实测", other_owner: "协作集成" };
-  $("statisticsCoverage").innerHTML = coverage.map((r) => `<div class="coverage-item ${r.status === 'complete' || r.status === 'measured' ? 'passed' : 'pending'}"><span class="coverage-icon">${r.status === 'complete' || r.status === 'measured' ? '✓' : '!'}</span><div><b>${esc(r.title)}</b><small>${esc(labels[r.status])} · ${esc(r.evidence)}</small></div></div>`).join("");
-  $("statisticsCommands").textContent = state.statistics.commands.join("\n");
-  $("statisticsDeliveryArtifacts").innerHTML = statAssetButtons(state.statistics.delivery_artifacts || []);
-  bindStatAssets($("statisticsDeliveryArtifacts"));
-  const mechanisms = state.statistics.inventory?.mechanisms || [];
-  $("statisticsInventory").innerHTML = `<details><summary>历史协议机制基因表（${state.statistics.inventory?.generation_count || 0} 个世代文件已索引）</summary><div class="data-table-scroll"><table><thead><tr><th>机制</th><th>来源</th><th>复用决策</th></tr></thead><tbody>${mechanisms.map((r) => `<tr><td>${esc(r.title)}</td><td><button type="button" class="statistics-protocol-link" data-stat-source="${esc(r.path)}">${esc(r.path)}:${r.line}</button><small class="statistics-ci">SHA-256 ${esc(r.source_hash.slice(0, 12))}…</small></td><td>${esc(r.decision)}</td></tr>`).join("")}</tbody></table></div></details>`;
-  document.querySelectorAll("[data-stat-source]").forEach((el) => el.onclick = () => {
-    $("filePreviewTitle").textContent = "历史协议机制来源";
-    $("filePreviewModal").classList.add("show");
-    renderAssetPreview(el.dataset.statSource, "filePreviewBody");
-  });
 }
 async function showStatisticsDetails(protocol = statisticsUI.protocol, page = 1) {
   if (!protocol) return;

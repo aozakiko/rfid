@@ -134,7 +134,7 @@ API Key 仅在当前页面使用，不写入浏览器本地存储、配置文件
 
 新增六组实验：主实验、共享/复核消融、H1三任务共享、H2复核与阈值敏感性、缺失/噪声/极端值、独立盲测。正式规格为20个seed、5个分布、1k/10k/100k；图中可切换bits/slots/rounds，点击协议名或图点可查看分页的逐seed真值、估计值、数据hash、轮次轨迹和失败原因。单场景展示95%CI，跨场景汇总明确标为描述性平均。
 
-页面右侧会列出 `main_reports.json`、`ablation_reports.json`、Pareto JSON、汇总 CSV 以及 PNG/PDF 图表，点击资产名称即可在页面内预览。底部的“与分工文档逐项对照”会核对统一 `RunResult`、同分布/seed/规模、通信成本主指标、基线、负结果和主/消融/Pareto 产物。
+页面右侧会列出 `main_reports.json`、`ablation_reports.json`、Pareto JSON、汇总 CSV 以及 PNG/PDF 图表，点击资产名称即可在页面内预览。分工验收清单、交付证据、机制基因表和复现命令集中在下文。
 
 直接访问：<http://127.0.0.1:8765/#statistics>。
 
@@ -142,7 +142,54 @@ API Key 仅在当前页面使用，不写入浏览器本地存储、配置文件
 
 点击“一键重跑正式实验”将在后台子进程生成整套结果，成功后发布新结果；不阻塞页面。真实LLM基线复用“Prompt与AI”的URL、Key和模型，点击“生成真实LLM随机候选”后再重跑，或者导入候选JSON。没有实际候选时显示待实测并保留失败原因，随机参数组不会冒充模型结果。网关未返回token用量时记为未知，不写0成本。
 
-当前交付已包含Pixel真实调用：gpt-6.1-sol，一次生成用量187 tokens。主实验中四任务各300条执行成功；Top-k平均F1为0.6811，完整匹配达标率35.67%，精度不足的结果全部保留。页面可预览提示词、响应和候选证据，刷新后保留当前候选。20个seed是同一候选的数据评价，不是20次模型生成；复现已保存候选无需密钥或再次调用模型。
+当前交付已包含Pixel真实调用：gpt-6.1-sol，一次生成用量187 tokens。主实验中四任务各300条执行成功；Top-k平均F1为0.6811，完整匹配达标率35.67%，精度不足的结果全部保留。提示词、响应和候选证据见下方交付文件链接，网页刷新后保留当前候选。20个seed是同一候选的数据评价，不是20次模型生成；复现已保存候选无需密钥或再次调用模型。
+
+#### 3.8.1 与分工文档逐项对照
+
+当前交付共9项完成、1项待共同集成。“完成”指代码与软件实验有可复现证据，不表示所有研究假设达到门槛；完整验收口径见[刘滕飞任务逐项验收](docs/刘滕飞任务逐项验收.md)。
+
+| 文档要求 | 状态 | 交付证据与边界 |
+| --- | --- | --- |
+| §5.3.1 / W1：历史协议机制基因表 | 已完成 | 143个世代文件索引、6类机制；源文件、行号与SHA-256可追溯 |
+| §5.3.2 / W3–4：共享采集与四任务 | 已完成 | `run_many`一次采集；均值、方差、在场标签数、Top-k共享`collection_id`，费用不跨任务重复相加 |
+| §5.3.3 / W2：通信成本模型 | 已完成软件模型 | 每帧广播、标签响应和预留空槽逐事件计数；保留reader/tag bits、slots、frames、rounds；无硬件时延结论 |
+| §5.3.4：Polling / 全识别 / 单任务基线 | 已完成 | 全识别为无碰撞乐观下界；单任务串联作为无共享消融 |
+| §5.3.4：真实LLM随机生成基线 | 已实测 | gpt-6.1-sol真实网关响应；一份冻结候选跨数据seed评价，保留Prompt/响应/候选记录 |
+| W6：固定 / 自适应复核与阈值 | 已完成 | 1/2/3/4帧、阈值0.5/1/2；逐seed配对H2，未达标结果保留；当前采用全帧复核 |
+| W7–8：规模、缺失、长尾和正式实验 | 已完成 | 20个seed、5分布、三个规模；缺失/噪声/极端值、独立盲测、95%CI/P95/最坏值 |
+| §5.3.5 / W8：主实验、消融与Pareto图 | 已完成 | 同任务内计算Pareto；失败或不可用候选排除出前沿，并保留原始失败记录 |
+| W9–10：算法章节、图表校对、交付 | 已完成 | 自动报告、机制表、H1/H2验收、复现命令、原始CSV/JSON及PNG/PDF |
+| 最终集成：演化 / 隔离验证接口 | 待共同集成 | 陈涛：选择、谱系、反馈修复及H3；严枭：安全沙箱、物理与隔离证明；刘滕飞已提供统计白名单编译器和评价接口 |
+
+#### 3.8.2 交付文件与真实模型证据
+
+| 文件 | 用途 |
+| --- | --- |
+| [hypotheses.json](code_add/Experiments/stat_protocols/hypotheses.json) | H1/H2逐条件结果、配对统计及未达标条件 |
+| [manifest.json](code_add/Experiments/stat_protocols/manifest.json) | 执行环境、源码SHA-256、实验规格、真实候选与运行行数 |
+| [mechanism_inventory.json](code_add/Experiments/stat_protocols/mechanism_inventory.json) | 历史机制、世代文件索引与完整hash |
+| [实验目录README](code_add/Experiments/stat_protocols/README.md) | 六组实验的文件导航与结果口径 |
+| [刘滕飞交付报告](code_add/Experiments/stat_protocols/刘滕飞交付报告.md) | 算法、成本模型、实验观察与局限 |
+| [LLM · candidate.json](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json) | 真实候选参数、模型、usage、Prompt/响应hash |
+| [LLM · prompt.txt](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/prompt.txt) | 实际发送的提示词 |
+| [LLM · response.txt](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/response.txt) | 模型原始响应 |
+
+#### 3.8.3 历史协议机制基因表
+
+当前交付索引143个历史世代文件；关键词只用于定位，不构成正确性或隐私证明。完整文件hash和`tracked`标记见上方机制索引文件。
+
+| 机制 | 来源 | 复用决策 |
+| --- | --- | --- |
+| 逐值精确计数与静默 | [ModeQueryEE.py:48](code_add/base_protocol/ModeQueryEE.py#L48) | 保留历史计数机制，不将原自报时间带入新基准 |
+| 全识别 | [ModeQueryID.py:7](code_add/base_protocol/ModeQueryID.py#L7) | 新基准明确采用无碰撞乐观下界 |
+| SEM位平面并行与零槽估计 | [ModeQuerySEM.py:68](code_add/base_protocol/ModeQuerySEM.py#L68) | 复用匿名占用位图与零槽反演；逐事件记录发射bits和预留slots |
+| 碰撞/占用利用 | [ModeQueryTCS.py:55](code_add/base_protocol/ModeQueryTCS.py#L55) | 从非空槽排序扩展为有限帧计数反演；保留桶饱和等负结果 |
+| SOG与多轮融合 | [ModeQueryTKQ.py:22](code_add/base_protocol/ModeQueryTKQ.py#L22) | 复用多轮独立测量思想，未声称实现SOG硬件 |
+| 早停、置信差与候选复核 | [test_g3_1.py:124](code_add/test/generation_3/test_g3_1.py#L124) | 复用不确定性驱动思想；当前采用全帧复核，定向单值复核留作扩展 |
+
+#### 3.8.4 复现实验命令
+
+在仓库根目录打开终端，运行以下命令可复现已保存真实候选的正式实验，不会再次调用模型：
 
 ```powershell
 cd code_add

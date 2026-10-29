@@ -95,7 +95,7 @@ const manuals = {
     "实验产物表中的“本页预览”会在右侧直接打开图片、PDF、CSV 或 JSON，不再跳转到 Outputs 页。协议选择采用“来源场景 + 协议”两级下拉，页面会自动拼成脚本需要的 name:source 格式。",
   ],
   statistics: [
-    "本页对应分工文档中的“统计协议与算法实验负责人”任务：共享统计草图、均值/方差/基数/Top-k、通信成本模型、基线协议、主实验、消融实验和 Pareto 图。",
+    "本页展示共享统计草图、均值/方差/基数/Top-k、通信成本、基线协议、主实验、消融实验和 Pareto 图。",
     "通信 bits 是 reader bits + tag bits；slots、frames、rounds 同时保留，CPU 时间只作为参考。每个实验行携带 distribution、num_tags 和 seed，筛选后可核对公平对比。",
     "图表和原始 JSON/CSV/PDF/PNG 均来自 Experiments/stat_protocols；失败行与 llm_random 负结果不会从页面隐藏。",
   ],
