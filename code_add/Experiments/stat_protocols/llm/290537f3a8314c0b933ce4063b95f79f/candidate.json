@@ -1,0 +1,68 @@
+{
+  "candidate_id": "290537f3a8314c0b933ce4063b95f79f",
+  "model": "gpt-6.1-sol",
+  "prompt_hash": "a84f4fdca462c296706598d3a6f35905d6bcb50e1d6ed35e7938889f5dc6ed3f",
+  "response_hash": "a1cfd4b5d2b2a7d597c4ba61430e50232388f93a3c79acb10d5c2ac4ba5e1353",
+  "usage": {
+    "input_tokens": 159,
+    "input_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0
+    },
+    "output_tokens": 28,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 187,
+    "attribution": {
+      "items": {
+        "msg_05aaea1889b63a3f016ae2e9bab67881a19ee3b5d83207c350": {
+          "input_tokens": 140,
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "output_tokens": 0,
+          "content": [
+            {
+              "input_tokens": 140,
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "output_tokens": 0
+            }
+          ]
+        },
+        "msg_05aaea1889b63a3f016ae2e9bc54fc81a1bee153e88b017efd": {
+          "input_tokens": 2,
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "output_tokens": 28,
+          "content": [
+            {
+              "input_tokens": 2,
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "output_tokens": 28
+            }
+          ]
+        }
+      },
+      "request_fields": {
+        "instructions": {
+          "input_tokens": 17,
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    }
+  },
+  "successful_requests": 1,
+  "retry_attempts": "not_exposed_by_client",
+  "created_at": "2026-10-29T06:37:49.624353+00:00",
+  "provenance": "real_gateway_response",
+  "genotype": {
+    "operator": "anonymous_histogram",
+    "rounds": 3,
+    "slots_per_value": 128,
+    "threshold": 1.75
+  }
+}

@@ -52,6 +52,12 @@ def dashboard():
         return {"available": False, "modes": {}, "coverage": [], "message": "尚未生成统计实验，请运行 python -m benchmark.suite"}
     data = dict(read_json(path))
     manifest = data.get("manifest", {})
+    llm_record = manifest.get("llm_record") or {}
+    llm_id = llm_record.get("candidate_id", "")
+    candidate_folder = EXPERIMENT_ROOT / "llm" / llm_id if re.fullmatch(r"[0-9a-f]{32}", llm_id) else None
+    llm_evidence = "可一键生成或导入真实候选；缺少记录时保留 missing_real_llm_candidate，不用随机扰动冒充"
+    if manifest.get("llm_status") == "record_supplied":
+        llm_evidence = f"{llm_record.get('model', '导入模型记录')}；来源 {llm_record.get('provenance', '未声明')}；一份冻结候选跨数据seed评价，Prompt/响应/候选记录可预览"
     modes = data.get("modes", {})
     dimensions = {"tasks": ["mean", "variance", "cardinality", "top_k"], "distributions": manifest.get("distributions", []), "scales": manifest.get("sizes", []), "seeds": manifest.get("seeds", [])}
     protocols = {row["protocol"] for mode in modes.values() for row in mode.get("rows", [])}
@@ -63,7 +69,7 @@ def dashboard():
         dict(key="shared_run_result", title="5.3.2 / W3–4：共享采集与四任务", status="complete", evidence="run_many 一次采集；均值、方差、在场基数、Top-k 共享 collection_id"),
         dict(key="communication", title="5.3.3 / W2：通信成本模型", status="complete", evidence="每帧广播/标签响应/预留空槽事件计数；reader/tag/slots/frames/rounds 全部保留"),
         dict(key="baselines", title="5.3.4：Polling / 全识别 / 单任务基线", status="complete" if {"polling", "full_identification", "single_serial"}.issubset(protocols) else "pending", evidence="完整识别为无碰撞乐观下界；单任务串联是明确的无共享消融"),
-        dict(key="llm", title="5.3.4：真实 LLM 随机生成基线", status="measured" if manifest.get("llm_status") == "record_supplied" else "needs_model", evidence="可一键生成或导入真实候选；缺少记录时保留 missing_real_llm_candidate，不用随机扰动冒充"),
+        dict(key="llm", title="5.3.4：真实 LLM 随机生成基线", status="measured" if manifest.get("llm_status") == "record_supplied" else "needs_model", evidence=llm_evidence),
         dict(key="recheck", title="W6：固定 / 自适应复核与阈值", status="complete" if "sensitivity" in modes else "pending", evidence="1/2/3/4 帧、阈值 0.5/1/2；逐 seed 配对 H2；负结果保留"),
         dict(key="robustness", title="W7–8：规模、缺失、长尾和正式实验", status="complete" if len(dimensions["seeds"]) >= 20 and len(dimensions["scales"]) >= 3 else "partial", evidence=f"{len(dimensions['seeds'])} 个 seed；5 分布；缺失/噪声/极端值；独立盲测；95% CI/P95/最坏值"),
         dict(key="experiments", title="5.3.5 / W8：主实验、消融与 Pareto 图", status="complete" if all(k in modes for k in MODES) else "partial", evidence="同任务内计算 Pareto；失败/不可用候选排除出前沿并单独展示"),
@@ -72,7 +78,11 @@ def dashboard():
     ]
     root = current_root()
     data["delivery_artifacts"] = [dict(name=p.name, path=_relative(p), size=p.stat().st_size, kind=p.suffix[1:]) for p in sorted(root.glob("*")) if p.is_file() and p.name != "dashboard.json"]
+    if candidate_folder:
+        data["delivery_artifacts"].extend(dict(name="LLM · " + p.name, path=_relative(p), size=p.stat().st_size, kind=p.suffix[1:]) for p in sorted(candidate_folder.glob("*")) if p.is_file() and p.name in ("prompt.txt", "response.txt", "candidate.json"))
     data["commands"] = ["cd code_add", "python -m benchmark.suite --output-dir Experiments/stat_protocols", "# 接入真实 LLM 候选后重跑：", "python -m benchmark.suite --llm-candidate Experiments/stat_protocols/llm/<候选ID>/candidate.json --output-dir Experiments/stat_protocols"]
+    if candidate_folder and (candidate_folder / "candidate.json").is_file():
+        data["commands"] = ["cd code_add", f"python -m benchmark.suite --llm-candidate {_relative(candidate_folder / 'candidate.json')} --output-dir Experiments/stat_protocols"]
     data["root"] = _relative(root)
     return data
 
@@ -140,8 +150,9 @@ def generate_baseline(config):
     folder = EXPERIMENT_ROOT / "llm" / candidate_id
     folder.mkdir(parents=True)
     # Keys are never included in prompts, manifests or error reports.
-    (folder / "prompt.txt").write_text(system + "\n\n" + BASELINE_PROMPT, encoding="utf-8")
-    (folder / "response.txt").write_text(raw, encoding="utf-8")
+    # Byte writes prevent Windows newline translation invalidating evidence hashes.
+    (folder / "prompt.txt").write_bytes((system + "\n\n" + BASELINE_PROMPT).encode("utf-8"))
+    (folder / "response.txt").write_bytes(raw.encode("utf-8"))
     record = dict(candidate_id=candidate_id, model=config.model, prompt_hash=hashlib.sha256((system + "\n\n" + BASELINE_PROMPT).encode()).hexdigest(), response_hash=hashlib.sha256(raw.encode()).hexdigest(), usage=client.usage, successful_requests=client.successful_requests, retry_attempts="not_exposed_by_client", created_at=datetime.now(timezone.utc).isoformat(), provenance="real_gateway_response", genotype=None)
     validation_error = ""
     try:

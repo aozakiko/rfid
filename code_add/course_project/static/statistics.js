@@ -151,7 +151,7 @@ function renderStatisticsInsights(selected) {
   const renderHypothesis = (name, rows) => rows.length ? `<div class="insight-card"><span>${name}：当前条件门槛通过</span><strong>${rows.filter((r) => r.target_passed).length} / ${rows.length}</strong><small>依据配对 seed 和 95% CI 上界判定；未通过条件保留。</small></div>` : '';
   $("statisticsInsights").innerHTML = renderHypothesis("H1 三任务共享", h1) + renderHypothesis("H2 自适应 vs 固定4轮", h2) +
     `<div class="insight-card"><span>研究边界</span><strong>软件匿名 OR 通道仿真</strong><small>发射 bits 与预留 slots 分别计量；大量空槽可能抵消 bits 优势。无真实硬件时延结论。</small></div>` +
-    `<div class="insight-card"><span>LLM 基线</span><strong>${state.statistics.manifest.llm_status === 'record_supplied' ? '已提供真实候选记录' : '待配置模型实测'}</strong><small>随机参数对照不会冒充模型生成。执行成功率与任务精度分别报告。</small></div>` +
+    `<div class="insight-card"><span>LLM 基线</span><strong>${state.statistics.manifest.llm_status === 'record_supplied' ? esc(state.statistics.manifest.llm_record?.model || '已提供候选记录') : '待配置模型实测'}</strong><small>${state.statistics.manifest.llm_record ? `一份冻结候选 · ${esc(state.statistics.manifest.llm_record.usage?.total_tokens ?? '用量未返回')} tokens · 在交付资产查看原始响应` : '随机参数对照不会冒充模型生成。'} 执行成功与精度达标分别报告。</small></div>` +
     `<p class="mini-note">当前实验集：${esc($("statisticsMode").selectedOptions[0].textContent)}。${mode === 'blind' ? '盲测 seed 从100开始，调参使用的数据不进入此集合。' : '◇ 表示当前任务与筛选条件下的 Pareto 点。'}</p>`;
 }
 function statAssetButtons(artifacts) {
@@ -216,6 +216,8 @@ async function loadStatistics() {
     try {
       state.statistics = await api("/api/statistics/benchmark");
       if (!state.statistics.available) throw new Error(state.statistics.message);
+      const record = state.statistics.manifest.llm_record;
+      if (!statisticsUI.candidateId && record?.candidate_id) selectStatisticsCandidate({ candidate_id: record.candidate_id, valid: !record.validation_error, path: `Experiments/stat_protocols/llm/${record.candidate_id}/candidate.json` });
       renderStatistics();
     } catch (e) {
       $("statisticsInsights").innerHTML = `<p class="mini-note">${esc(e.message)} <button type="button" class="btn secondary" id="retryStatistics">重新读取</button></p>`;

@@ -14,6 +14,7 @@
 | `mechanism_inventory.json` | 6类机制来源及历史世代索引；tracked=false标记本地未提交资产 |
 | `hypotheses.json` | H1/H2逐条件门槛、配对统计与未达标结果；H3归演化模块 |
 | `dashboard.json` | Web可视化用单场景聚合结果，不替代原始逐seed文件 |
+| `llm/290537f3a8314c0b933ce4063b95f79f/` | Pixel真实模型单次生成的prompt.txt、response.txt、candidate.json；含hash和网关usage，无密钥 |
 
 各子目录的 `*_cases.csv` 是单一分布/规模/扰动下的20seed统计，含95%CI、P95、worst、执行成功与精度达标率。`*_summary.csv` 是跨场景描述性汇总。逐seed原始数据和失败行位于 `*_reports.json`。
 
@@ -21,7 +22,9 @@
 
 ```powershell
 cd code_add
-python -m benchmark.suite --output-dir Experiments/stat_protocols
+python -m benchmark.suite --llm-candidate Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json --output-dir Experiments/stat_protocols
 ```
 
 软件仿真不代表射频硬件实测。共享采集费用只记一次，不跨任务行重复求和；实际发射bits与所有预留slots都须报告。真实LLM缺少记录时明确待实测，不以随机参数替代。Web重跑结果按 `runs/<运行ID>/` 保存，成功后用latest.json发布。
+
+本次已使用真实Pixel记录：模型gpt-6.1-sol，159输入+28输出=187 tokens。一份候选冻结后跨数据seed评价；复现上述命令不再调用外部模型、不需要API Key。网页刷新后保留该候选，可直接点击重跑；另行生成候选才需要配置网关。

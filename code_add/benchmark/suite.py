@@ -18,7 +18,7 @@ from statistics import mean
 
 from stat_protocols.contracts import CostModel, TaskSpec
 from .experiments import MAIN_PROTOCOLS, ABLATION_PROTOCOLS, SENSITIVITY_PROTOCOLS, pareto_front
-from .runner import run_benchmark, write_results, summarize_cases, mean_ci
+from .runner import run_benchmark, write_results, summarize_cases, summarize_reports, mean_ci
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "2.0"
@@ -168,6 +168,19 @@ def make_figures(output, report_sets):
 def write_report(output, manifest, hypotheses, inventory):
     passed_h1 = sum(r["target_passed"] for r in hypotheses["H1"])
     adaptive_h2 = [r for r in hypotheses["H2"] if r["protocol"] == "adaptive"]
+    record = manifest.get("llm_record")
+    llm_evidence = "尚未提供实际模型记录；保留 missing_real_llm_candidate，不填造模型效果。"
+    if record:
+        llm_evidence = f"模型 `{record.get('model')}`，候选 `{record.get('candidate_id')}`，来源 `{record.get('provenance')}`。\n\n"
+        llm_evidence += f"Prompt SHA-256：`{record.get('prompt_hash')}`；响应 SHA-256：`{record.get('response_hash')}`。\n\n"
+        usage = record.get("usage") or {}
+        token_usage = {k: usage[k] for k in ("input_tokens", "output_tokens", "total_tokens", "prompt_tokens", "completion_tokens") if k in usage}
+        llm_evidence += f"候选参数：`{json.dumps(record.get('genotype'), ensure_ascii=False)}`。网关返回用量：`{json.dumps(token_usage, ensure_ascii=False)}`。\n\n"
+        llm_evidence += "仅生成一个候选，在所有场景冻结参数；20个seed衡量数据变化，不代表20次独立模型生成。受限算子基线不等同自由Python协议搜索。跨场景均值仅作描述，单场景CI见main_cases.csv。\n\n"
+        llm_evidence += "| 任务 | 执行成功/总数 | 质量达标率 | 平均误差（Top-k为1−F1） | 平均发射bits |\n| --- | --- | --- | --- | --- |\n"
+        for row in manifest.get("llm_summary", []):
+            error = f"{row['mean_error']:.6f}" if row['mean_error'] is not None else "不可用"
+            llm_evidence += f"| {row['task']} | {row['runs'] - row['failed_runs']}/{row['runs']} | {row['quality_pass_rate']:.2%} | {error} | {row['mean_communication_bits']:.1f} |\n"
     text = f'''# 刘滕飞交付核对与算法实验报告
 
 实验版本：{VERSION}。本报告由 `python -m benchmark.suite` 自动生成，原始结果及每个 seed 均可追溯。
@@ -192,6 +205,10 @@ Polling 使用 32-bit 寻址 + 32-bit 属性；全识别采用 160-bit 广播 + 
 random_sketch_control 是随机参数对照，**不是 LLM 生成**。llm_random 仅接收真实模型生成记录，经白名单统计算子编译。
 若缺少模型/Prompt/响应证据，则保留 missing_real_llm_candidate 失败行，不伪造调用、token 或成功率。
 
+## 真实模型基线证据
+
+{llm_evidence}
+
 ## 正式实验规格
 
 - 正式主实验、共享消融、固定/自适应复核和阈值敏感性：{len(manifest['seeds'])} 个独立 seed、5 个分布、1k/10k/100k 三个规模。
@@ -213,7 +230,7 @@ H2 使用逐 seed 配对的 F1 损失和通信节省。默认自适应阈值 1 �
 1. 软件 OR 通道不包含射频误码、捕获效应、同步、调制或 EPC C1G2 防碰撞过程；无硬件验证。
 2. 均匀分布近似并列频次、密集长尾桶饱和会导致 Top-k 错误或标量偏差；报告均保留 saturation 和质量不达标结果。
 3. 当前采用全帧复核；候选定向复核是后续扩展。整数值域已冻结为 1..1000，连续物理数据必须先声明量化规则。
-4. 实际 LLM 候选需要用户在 Web 配置模型后生成，或导入合法记录；本地没有密钥时对应结果明确待实测。
+4. LLM对照只覆盖一份冻结候选；模型生成随机性、不同提示词和多候选统计仍未评估。缺少实际记录时明确待实测。
 5. 现有自由 Python 协议的成本未通过新通道插桩，不能凭其自报时间混入新 Pareto 图。
 6. AST/运行时沙箱、信息隔离证明归严枭；适应度、选择、谱系和验证修复归陈涛。待对接项在清单中单列，不冒充本人的研究结果。
 
@@ -263,6 +280,9 @@ def run_suite(output, seed_count=20, sizes=(1000, 10000, 100000), llm_candidate=
     except (OSError, subprocess.CalledProcessError):
         revision = "unknown"
     manifest = dict(schema_version=VERSION, seeds=seeds, blind_seeds=list(range(100, 100 + seed_count)), sizes=list(sizes), distributions=list(distributions), output_dir=str(output), revision=revision, python=sys.version, platform=platform.platform(), cost_model=CostModel().to_dict(), source_hashes={p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}, llm_status="record_supplied" if llm_candidate else "not_measured_missing_candidate", elapsed_s=round(time.perf_counter() - started, 2), run_counts={m: len(r) for m, r in report_sets.items()})
+    if llm_candidate:
+        manifest["llm_record"] = {k: llm_candidate.get(k) for k in ("candidate_id", "model", "prompt_hash", "response_hash", "genotype", "provenance", "created_at", "usage", "successful_requests", "validation_error")}
+        manifest["llm_summary"] = summarize_reports(r for r in report_sets["main"] if r.protocol == "llm_random")
     inventory = source_inventory()
     hypotheses = hypothesis_results(report_sets)
     save_json(output / "manifest.json", manifest)

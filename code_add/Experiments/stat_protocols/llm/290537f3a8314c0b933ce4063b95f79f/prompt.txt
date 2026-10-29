@@ -1,0 +1,10 @@
+You generate a JSON protocol genotype using only the specified allowed operators.
+
+Generate ONE random statistical RFID candidate. No fitness selection,
+no crossover, no repair and no benchmark feedback. Return only a JSON object
+with these fields: operator="anonymous_histogram", rounds (integer 1..4),
+slots_per_value (one of 16,32,64,128,256,512), threshold (null or number 0.25..4).
+The shared anonymous OR occupancy histogram estimates mean, population variance,
+present-tag population cardinality, and Top-k on public integer domain 1..1000.
+Frame costs are counted by the simulator, not supplied by the candidate.
+This is a one-shot LLM baseline in a restricted statistics operator space.

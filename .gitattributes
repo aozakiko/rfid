@@ -1,0 +1,3 @@
+# Model evidence hashes cover exact UTF-8 bytes, including original newlines.
+code_add/Experiments/stat_protocols/llm/*/prompt.txt -text
+code_add/Experiments/stat_protocols/llm/*/response.txt -text

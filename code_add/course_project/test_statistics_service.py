@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -14,6 +15,31 @@ from benchmark.runner import evaluate_run, write_results
 
 
 class StatisticsServiceTests(unittest.TestCase):
+    def test_dashboard_links_measured_candidate_evidence_and_reproduction(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            output = root / "Experiments" / "stat_protocols"
+            candidate_id = "b" * 32
+            evidence = output / "llm" / candidate_id
+            evidence.mkdir(parents=True)
+            record = {"candidate_id": candidate_id, "model": "fixture-model", "provenance": "real_gateway_response"}
+            for name in ("candidate.json", "prompt.txt", "response.txt"):
+                (evidence / name).write_text("{}", encoding="utf-8")
+            data = {"manifest": {"llm_status": "record_supplied", "llm_record": record}, "modes": {}}
+            (output / "dashboard.json").write_text(json.dumps(data), encoding="utf-8")
+            with patch.object(service, "ROOT", root), patch.object(service, "EXPERIMENT_ROOT", output):
+                measured = service.dashboard()
+                data["manifest"] = {"llm_status": "not_measured_missing_candidate"}
+                (output / "dashboard.json").write_text(json.dumps(data), encoding="utf-8")
+                missing = service.dashboard()
+            coverage = {row["key"]: row for row in measured["coverage"]}
+            self.assertEqual(coverage["llm"]["status"], "measured")
+            self.assertIn("fixture-model", coverage["llm"]["evidence"])
+            self.assertEqual(len([a for a in measured["delivery_artifacts"] if a["name"].startswith("LLM")]), 3)
+            self.assertIn(candidate_id, measured["commands"][-1])
+            self.assertEqual(next(r for r in missing["coverage"] if r["key"] == "llm")["status"], "needs_model")
+            self.assertFalse(any(a["name"].startswith("LLM") for a in missing["delivery_artifacts"]))
+
     def test_details_keep_failed_rows_and_filter_float_scenario(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -35,6 +61,9 @@ class StatisticsServiceTests(unittest.TestCase):
                 self.assertEqual(result["valid"], valid)
                 self.assertEqual(request.call_count, 1)
                 self.assertEqual(len(result["record"]["prompt_hash"]), 64)
+                evidence = Path(folder) / "Experiments" / "llm" / result["candidate_id"]
+                self.assertEqual(hashlib.sha256((evidence / "prompt.txt").read_bytes()).hexdigest(), result["record"]["prompt_hash"])
+                self.assertEqual(hashlib.sha256((evidence / "response.txt").read_bytes()).hexdigest(), result["record"]["response_hash"])
                 for path in Path(folder).rglob("*"):
                     if path.is_file():
                         self.assertNotIn(config.api_key, path.read_text(encoding="utf-8"))

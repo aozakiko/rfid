@@ -1,0 +1,1 @@
+{"operator":"anonymous_histogram","rounds":3,"slots_per_value":128,"threshold":1.75}

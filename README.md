@@ -142,9 +142,11 @@ API Key 仅在当前页面使用，不写入浏览器本地存储、配置文件
 
 点击“一键重跑正式实验”将在后台子进程生成整套结果，成功后发布新结果；不阻塞页面。真实LLM基线复用“Prompt与AI”的URL、Key和模型，点击“生成真实LLM随机候选”后再重跑，或者导入候选JSON。没有实际候选时显示待实测并保留失败原因，随机参数组不会冒充模型结果。网关未返回token用量时记为未知，不写0成本。
 
+当前交付已包含Pixel真实调用：gpt-6.1-sol，一次生成用量187 tokens。主实验中四任务各300条执行成功；Top-k平均F1为0.6811，完整匹配达标率35.67%，精度不足的结果全部保留。页面可预览提示词、响应和候选证据，刷新后保留当前候选。20个seed是同一候选的数据评价，不是20次模型生成；复现已保存候选无需密钥或再次调用模型。
+
 ```powershell
 cd code_add
-python -m benchmark.suite --output-dir Experiments/stat_protocols
+python -m benchmark.suite --llm-candidate Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json --output-dir Experiments/stat_protocols
 ```
 
 ### 3.9 审计

@@ -80,7 +80,8 @@ class StatisticalProtocolContractTests(unittest.TestCase):
         coverage = {item["key"]: item for item in state["coverage"]}
         self.assertEqual(coverage["recheck"]["status"], "complete")
         self.assertEqual(coverage["integration"]["status"], "other_owner")
-        self.assertEqual(coverage["llm"]["status"], "needs_model")
+        expected_llm = "measured" if state["manifest"]["llm_status"] == "record_supplied" else "needs_model"
+        self.assertEqual(coverage["llm"]["status"], expected_llm)
 
     def test_shared_collection_is_charged_once_and_serial_is_not(self):
         spec = TaskSpec(num_tags=300, tasks=("mean", "variance", "cardinality"))
