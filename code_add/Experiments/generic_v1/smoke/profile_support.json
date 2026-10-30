@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "run_id": "105b7510cee84c418323c2ccaa960b40",
+  "resolver": "generic_tasks.resolve_canonical_tasks",
+  "canonical_tasks": [
+    "mean",
+    "variance",
+    "cardinality",
+    "top_k"
+  ],
+  "profiles": [
+    {
+      "profile": "mean_estimation",
+      "benchmarkable": true,
+      "status": "benchmarkable",
+      "canonical_tasks": [
+        "mean"
+      ],
+      "accuracy": "measured_in_results_json",
+      "accuracy_policy": "measured_by_benchmark",
+      "reason": null
+    },
+    {
+      "profile": "variance_estimation",
+      "benchmarkable": true,
+      "status": "benchmarkable",
+      "canonical_tasks": [
+        "variance"
+      ],
+      "accuracy": "measured_in_results_json",
+      "accuracy_policy": "measured_by_benchmark",
+      "reason": null
+    },
+    {
+      "profile": "cardinality_estimation",
+      "benchmarkable": true,
+      "status": "benchmarkable",
+      "canonical_tasks": [
+        "cardinality"
+      ],
+      "accuracy": "measured_in_results_json",
+      "accuracy_policy": "measured_by_benchmark",
+      "reason": null
+    },
+    {
+      "profile": "top_k",
+      "benchmarkable": true,
+      "status": "benchmarkable",
+      "canonical_tasks": [
+        "top_k"
+      ],
+      "accuracy": "measured_in_results_json",
+      "accuracy_policy": "measured_by_benchmark",
+      "reason": null
+    },
+    {
+      "profile": "mode_query",
+      "benchmarkable": false,
+      "status": "not_benchmarkable",
+      "canonical_tasks": [],
+      "accuracy": null,
+      "accuracy_policy": "not_available",
+      "reason": "legacy/custom profiles cannot be mapped to a statistical truth contract; no accuracy is inferred"
+    },
+    {
+      "profile": "custom_task",
+      "benchmarkable": false,
+      "status": "not_benchmarkable",
+      "canonical_tasks": [],
+      "accuracy": null,
+      "accuracy_policy": "not_available",
+      "reason": "legacy/custom profiles cannot be mapped to a statistical truth contract; no accuracy is inferred"
+    }
+  ]
+}

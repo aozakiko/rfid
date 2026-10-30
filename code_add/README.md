@@ -48,6 +48,14 @@ http://127.0.0.1:8765
 - `Validator.py`：协议物理约束验证。
 - `Test.py`：命令行协议批量测试器。
 
+## 通用版本入口
+
+- 一键验证：`python -m tools.verify`
+- 配置化 smoke：`python -m benchmark.run_config --config benchmark/configs/smoke.json`
+- 配置化正式实验：`python -m benchmark.run_config --config benchmark/configs/final.json`
+
+任务画像见 `generic_tasks/`，协议适配和安全执行见 `generic_protocol/`，详细接口见 `../docs/通用接口与运行基线v1.md`。
+
 ## 验证命令
 
 ```powershell

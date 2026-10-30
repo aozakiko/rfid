@@ -1,0 +1,15 @@
+{
+  "name": "generic-smoke",
+  "profiles": ["mean_estimation", "variance_estimation", "cardinality_estimation", "top_k", "mode_query", "custom_task"],
+  "protocols": ["shared_sketch"],
+  "distributions": ["uniform"],
+  "sizes": [16],
+  "seeds": [0],
+  "output_dir": "Experiments/generic_v1/smoke",
+  "price_min": 1,
+  "price_max": 16,
+  "missing_rate": 0.0,
+  "noise_rate": 0.0,
+  "extreme_rate": 0.0,
+  "split": "evaluation"
+}

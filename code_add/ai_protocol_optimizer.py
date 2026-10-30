@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import importlib.util
 import re
 import sys
@@ -12,9 +13,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from Validator import ProtocolValidator
 from backend_tools.openai_compatible import LLMClientError, LLMConfig, OpenAICompatibleClient
 from prompt_generation import build_crossover_prompt
+from backend_tools.protocol_metrics import normalize_protocol_metrics
+from generic_protocol import CandidateRecord
+from generic_protocol.subprocess_runner import run_protocol_file
 
 
 GENERATION_PATTERN = re.compile(r"^generation_?(\d+)$")
@@ -62,9 +65,13 @@ CUSTOM_TASK_PROFILE = "custom_task"
 
 
 def validate_task_profile(task_profile: str, custom_task_text: str | None = None) -> str:
+    from generic_tasks import validate_profile_id
+
     profile = str(task_profile or "mode_query").strip()
-    if profile not in TASK_GUIDANCE:
-        raise ValueError(f"未知任务画像: {profile}")
+    try:
+        profile = validate_profile_id(profile)
+    except (KeyError, ValueError) as exc:
+        raise ValueError(f"未知任务画像: {profile}") from exc
     if profile == CUSTOM_TASK_PROFILE and len(str(custom_task_text or "").strip()) < 8:
         raise ValueError("选择“任意自定义任务”时，请至少填写 8 个字符的任务说明")
     return profile
@@ -72,6 +79,8 @@ def validate_task_profile(task_profile: str, custom_task_text: str | None = None
 
 def task_guidance(task_profile: str, custom_task_text: str | None = None) -> dict[str, str]:
     profile = validate_task_profile(task_profile, custom_task_text)
+    # TASK_GUIDANCE remains the user-facing prompt wording; semantic scope and
+    # canonical task mapping come from generic_tasks.
     guidance = dict(TASK_GUIDANCE[profile])
     if profile == CUSTOM_TASK_PROFILE:
         guidance["custom_text"] = str(custom_task_text or "").strip()
@@ -80,6 +89,51 @@ def task_guidance(task_profile: str, custom_task_text: str | None = None) -> dic
 
 def _log(message: str, logger) -> None:
     logger(message)
+
+def _candidate_record(
+    *,
+    protocol_name: str,
+    task_profile: str,
+    parents: tuple[str, str],
+    prompt_text: str,
+    response_text: str,
+    code: str,
+    model: str,
+    validation: dict[str, Any] | None,
+    status: str,
+) -> CandidateRecord:
+    prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
+    response_hash = hashlib.sha256(response_text.encode("utf-8")).hexdigest()
+    source_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    candidate_id = hashlib.sha256(
+        f"{protocol_name}\0{prompt_hash}\0{response_hash}\0{source_hash}".encode("utf-8")
+    ).hexdigest()[:32]
+    validation_summary: dict[str, Any] = {}
+    if validation:
+        validation_summary = {
+            "is_valid": validation.get("is_valid"),
+            "smoke_hit": validation.get("smoke_hit"),
+            "information_isolation_passed": validation.get("information_isolation_passed"),
+            "semantic_validation": validation.get("semantic_validation"),
+            "validation_scope": validation.get("validation_scope"),
+        }
+    return CandidateRecord(
+        candidate_id=candidate_id,
+        protocol_name=protocol_name,
+        candidate_type="legacy_python",
+        parents=parents,
+        task_profile=task_profile,
+        genotype={"class_name": protocol_name, "execution": "legacy_i_protocol"},
+        prompt_hash=prompt_hash,
+        response_hash=response_hash,
+        model=model,
+        source_hash=source_hash,
+        validation_result=validation_summary,
+        benchmark_result=None,
+        status=status,
+    )
+
+
 
 
 def _load_scene_task(scene_name: str):
@@ -203,16 +257,6 @@ def _enforce_class_name(code: str, protocol_name: str) -> str:
     return renamed + "\n"
 
 
-def _load_protocol_instance(protocol_file: Path, protocol_name: str):
-    spec = importlib.util.spec_from_file_location(f"ai_opt.generated.{protocol_name}", protocol_file)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"无法加载协议文件: {protocol_file}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    protocol_class = getattr(module, protocol_name)
-    return protocol_class()
-
-
 def _scan_information_isolation(protocol_file: Path) -> dict[str, Any]:
     try:
         text = protocol_file.read_text(encoding="utf-8", errors="ignore")
@@ -297,7 +341,7 @@ def _profile_metrics(estimated_values: list[Any], target_values: list[Any], task
         estimated_set = set(estimated_values or [])
         target_set = set(target_values or [])
         overlap_count = len(estimated_set & target_set)
-        hit = bool(estimated_set) and bool(target_set) and estimated_set.issubset(target_set)
+        hit = bool(estimated_set) and bool(target_set) and estimated_set == target_set
         precision = (overlap_count / len(estimated_set)) if estimated_set else 0.0
         recall = (overlap_count / len(target_set)) if target_set else 0.0
         return hit, precision, recall
@@ -321,26 +365,49 @@ def _validate_protocol(
     price_max = int(simulation_config.get("PRICE_MAX", 1000))
     num_tags = max(20, int(validate_num_tags))
 
-    protocol_instance = _load_protocol_instance(protocol_file, protocol_name)
     information_isolation = _scan_information_isolation(protocol_file)
     validation_tags, _ = generate_tags(num_tags, price_min, price_max)
-    validator = ProtocolValidator(protocol_name=protocol_name, protocol_instance=protocol_instance)
-    is_valid, report = validator.validate(validation_tags, price_min, price_max)
+    execution_spec = {
+        "price_min": price_min,
+        "price_max": price_max,
+        "seed": 0,
+        "tasks": ["legacy_mode_query"],
+    }
+    validation_results = run_protocol_file(protocol_file, protocol_name, validation_tags, execution_spec, timeout_seconds=15)
+    validation_result = next(iter(validation_results.values()))
+    verification_data = dict(validation_result.run_result.metadata.get("verification_data") or {})
+    normalized_metrics = normalize_protocol_metrics(verification_data)
+    bits_per_slot = int(normalized_metrics.get("bits_per_slot") or 0)
+    frame_size = int(normalized_metrics.get("frame_size") or 0)
+    physical_ok = 0 < bits_per_slot <= 256 and 0 < frame_size <= 32768
+    is_valid = not validation_result.failure_reason and physical_ok
+    report_lines = [
+        f"协议 {protocol_name} 子进程执行: {'成功' if not validation_result.failure_reason else validation_result.failure_reason}",
+        f"时隙宽度限制 (<= 256 bits): {'通过' if 0 < bits_per_slot <= 256 else '失败'} ({bits_per_slot})",
+        f"帧长限制 (<= 32768 slots): {'通过' if 0 < frame_size <= 32768 else '失败'} ({frame_size})",
+    ]
+    report = "\n".join(report_lines)
 
     smoke_tags, true_info = generate_tags(num_tags, price_min, price_max)
-    estimated_values, metric, exec_time_ms, _ = protocol_instance.execute(smoke_tags, price_min, price_max)
-    estimated_values = list(estimated_values or [])
+    smoke_results = run_protocol_file(protocol_file, protocol_name, smoke_tags, execution_spec, timeout_seconds=15)
+    smoke_result = next(iter(smoke_results.values()))
+    estimated_values = list(smoke_result.estimate or [])
     target_values = _target_values_for_profile(smoke_tags, true_info if isinstance(true_info, dict) else {}, task_profile)
-    if task_profile == CUSTOM_TASK_PROFILE:
+    if smoke_result.failure_reason:
+        smoke_hit = False
+        smoke_precision = None
+        smoke_recall = None
+    elif task_profile == CUSTOM_TASK_PROFILE:
         # There is no universal business truth for an arbitrary natural-language task.
         # Treat a successfully executed list-shaped result as the smoke contract and
         # report semantic accuracy as unavailable instead of inventing a target.
-        smoke_hit = isinstance(estimated_values, list)
+        smoke_hit = isinstance(smoke_result.estimate, list)
         smoke_precision = None
         smoke_recall = None
     else:
         smoke_hit, smoke_precision, smoke_recall = _profile_metrics(estimated_values, target_values, task_profile)
-
+    metric = smoke_result.run_result.metadata.get("metric")
+    exec_time_ms = smoke_result.cpu_time_ms
     return {
         "is_valid": bool(is_valid),
         "report": report,
@@ -487,6 +554,18 @@ def run_ai_optimization_workflow(
 
         if last_validation["is_valid"] and last_validation["smoke_hit"]:
             _log("候选协议通过验证，自动生成流程完成。", logger)
+            candidate = _candidate_record(
+                protocol_name=protocol_name,
+                task_profile=task_profile,
+                parents=(parent_a, parent_b),
+                prompt_text=prompt_text,
+                response_text=response_text,
+                code=code,
+                model=config.model,
+                validation=last_validation,
+                status="validated",
+            )
+            candidate_file = candidate.write_json(target_file.with_suffix(".candidate.json"))
             return {
                 "status": "success",
                 "target_file": str(target_file),
@@ -494,6 +573,8 @@ def run_ai_optimization_workflow(
                 "protocol_exists": target_file.exists(),
                 "attempts": attempt,
                 "validation": last_validation,
+                "candidate_file": str(candidate_file),
+                "candidate_record": candidate.to_dict(),
             }
 
         repair_feedback = (
@@ -504,6 +585,18 @@ def run_ai_optimization_workflow(
         _log("候选协议未完全通过，准备进入自修复轮次。", logger)
 
     _log("达到最大自修复轮数，返回最后候选协议和验证报告。", logger)
+    candidate = _candidate_record(
+        protocol_name=protocol_name,
+        task_profile=task_profile,
+        parents=(parent_a, parent_b),
+        prompt_text=prompt_text,
+        response_text=response_text,
+        code=code,
+        model=config.model,
+        validation=last_validation,
+        status="failed",
+    )
+    candidate_file = candidate.write_json(target_file.with_suffix(".candidate.json"))
     return {
         "status": "failed",
         "target_file": str(target_file),
@@ -511,6 +604,8 @@ def run_ai_optimization_workflow(
         "protocol_exists": target_file.exists(),
         "attempts": attempts,
         "validation": last_validation,
+        "candidate_file": str(candidate_file),
+        "candidate_record": candidate.to_dict(),
     }
 
 

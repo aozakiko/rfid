@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "run_id": "105b7510cee84c418323c2ccaa960b40",
+  "config_hash": "8d6572bb83953b744f9afebf97840dafa1e6eb70a1bd60eb05df02602b723d94",
+  "command": [
+    "python",
+    "-m",
+    "benchmark.run_config",
+    "--config",
+    "benchmark/configs/smoke.json"
+  ],
+  "start_commit": "34bca808db848ad5ee6bfd44bf53fd8b4b27e2bf",
+  "experiment_generation_commit": null,
+  "release_commit": null,
+  "git_dirty": true,
+  "python_version": "3.8.20",
+  "package_versions": {
+    "numpy": "1.24.4"
+  },
+  "profiles": [
+    "mean_estimation",
+    "variance_estimation",
+    "cardinality_estimation",
+    "top_k",
+    "mode_query",
+    "custom_task"
+  ],
+  "protocols": [
+    "shared_sketch"
+  ],
+  "distributions": [
+    "uniform"
+  ],
+  "sizes": [
+    16
+  ],
+  "seeds": [
+    0
+  ],
+  "started_at": "2026-10-30T05:50:59.014408+00:00",
+  "finished_at": "2026-10-30T05:50:59.161827+00:00",
+  "status": "success",
+  "output_files": [
+    "results.json",
+    "summary.csv",
+    "profile_support.json",
+    "manifest.json"
+  ]
+}

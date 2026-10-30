@@ -42,7 +42,7 @@ def evaluate_run(result: RunResult, cost_model: CostModel | None = None) -> Eval
     model = cost_model or CostModel()
     if result.failure_reason:
         return EvaluationReport(result.protocol, result.task, result.seed, "failed", communication_bits=result.communication_bits, simulated_cost_ms=model.estimate_ms(reader_bits=result.reader_bits, tag_bits=result.tag_bits, slots=result.slots, frames=result.frames, rounds=result.rounds), cpu_time_ms=result.cpu_time_ms, failure_reason=result.failure_reason, run_result=result)
-    if result.task == "top_k":
+    if result.task == "top_k" or result.metadata.get("metric_kind") == "set" or result.task.endswith("_mode_query"):
         if not isinstance(result.estimate, (list, tuple, set)) or not isinstance(result.truth, (list, tuple, set)):
             return evaluate_run(replace(result, failure_reason="invalid_top_k_output_contract"), model)
         precision, recall, f1, jaccard = _set_metrics(result.truth, result.estimate)
@@ -151,11 +151,19 @@ def summarize_reports(reports: Iterable[EvaluationReport]) -> list[dict[str, Any
         quality = [1 - r.f1 if r.f1 is not None else r.relative_error for r in successes]
         quality = [q for q in quality if q is not None and math.isfinite(q)]
         low, high = mean_ci(quality)
+        quality_passes = [
+            (r.f1 >= 1 - 1e-9) if r.f1 is not None else (r.relative_error <= (.1 if task == "variance" else .05))
+            for r in successes
+        ]
         rows.append({
             "protocol": protocol,
             "task": task,
             "runs": len(values),
             "success_rate": len(successes) / len(values) if values else 0.0,
+            "execution_success_rate": len(successes) / len(values) if values else 0.0,
+            "quality_pass_rate_successes": sum(quality_passes) / len(successes) if successes else None,
+            "overall_pass_rate": sum(quality_passes) / len(values) if values else 0.0,
+            "cost_status": "missing" if any(r.run_result.metadata.get("cost_status") == "missing" for r in values) else "measured",
             "mean_relative_error": sum(errors) / len(errors) if errors else None,
             "mean_f1": sum(f1s) / len(f1s) if f1s else None,
             "mean_communication_bits": sum(costs) / len(costs) if costs else 0.0,
@@ -171,7 +179,7 @@ def summarize_reports(reports: Iterable[EvaluationReport]) -> list[dict[str, Any
             "mean_slots": statistics.mean(r.run_result.slots for r in values),
             "mean_frames": statistics.mean(r.run_result.frames for r in values),
             "mean_rounds": statistics.mean(r.run_result.rounds for r in values),
-            "quality_pass_rate": sum((r.f1 >= 1 - 1e-9) if r.f1 is not None else (r.relative_error <= (.1 if task == "variance" else .05)) for r in successes) / len(values) if values else 0.0,
+            "quality_pass_rate": sum(quality_passes) / len(values) if values else 0.0,
             "mean_precision": statistics.mean(r.precision for r in successes if r.precision is not None) if f1s else None,
             "mean_recall": statistics.mean(r.recall for r in successes if r.recall is not None) if f1s else None,
             "mean_jaccard": statistics.mean(r.jaccard for r in successes if r.jaccard is not None) if f1s else None,

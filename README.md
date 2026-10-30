@@ -34,6 +34,17 @@ python -m course_project.web_app --host 127.0.0.1 --port 8765
 
 截图取自实际页面。基础工作区截图使用独立的临时审计数据库；统计基准截图使用当前已生成的20-seed实验结果和真实候选记录。截图中的本机绝对路径统一简写为 `code_add`，不会包含 API Key。运行时的数量、日期和结果随本地资产变化。
 
+## 1.1 通用版本一键验证
+
+本轮新增通用任务画像、协议适配、配置化 benchmark 和安全子进程执行。执行完整验证：
+
+```powershell
+Set-Location .\code_add
+python -m tools.verify
+```
+
+该命令会执行语法检查、全量单元测试和临时 smoke benchmark。配置化实验入口见 [`docs/通用接口与运行基线v1.md`](docs/通用接口与运行基线v1.md)，本轮结果见 [`docs/通用版本本轮完成报告.md`](docs/通用版本本轮完成报告.md)。
+
 ## 2. 建议先走通的流程
 
 1. 打开“场景与代码”，选择 `test` 场景，阅读 `ModeQuerySEM`、`ModeQueryTKQ` 等父代协议。
