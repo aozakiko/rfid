@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 from collections.abc import Mapping
 import os
@@ -10,11 +11,13 @@ import subprocess
 import sys
 import tempfile
 from typing import Any
+from dataclasses import replace
 
 from stat_protocols.contracts import RunResult
 
 from .base import get_spec_value, nonnegative_int, requested_tasks
 from .legacy_adapter import LegacyProtocolAdapter
+from .security import analyze_file
 
 
 def _tag_payload(tags: Any) -> list[dict[str, Any]]:
@@ -83,6 +86,8 @@ def run_protocol_file(
     tags: Any,
     spec: Any,
     timeout_seconds: float = 10,
+    security_mode: str = "legacy",
+    memory_limit_mb: int = 768,
 ) -> dict[str, RunResult]:
     """Run one protocol file in a fresh Python process.
 
@@ -99,11 +104,35 @@ def run_protocol_file(
         raise ValueError("timeout_seconds must be a positive number") from exc
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout_seconds must be a positive number")
+    if security_mode not in {"legacy", "strict"}:
+        raise ValueError("security_mode must be 'legacy' or 'strict'")
+    if type(memory_limit_mb) is not int or not 128 <= memory_limit_mb <= 4096:
+        raise ValueError("memory_limit_mb must be an integer in 128..4096")
 
     path = Path(protocol_file).expanduser().resolve()
     if not path.is_file():
         return _failure_results(spec, protocol_name, f"protocol_file_not_found: {path}")
 
+    if security_mode == "strict":
+        security_report = analyze_file(path, strict=True)
+        if not security_report.get("passed"):
+            rules = ", ".join(sorted({str(item.get("rule")) for item in security_report.get("violations", [])}))
+            return _failure_results(
+                spec,
+                protocol_name,
+                f"strict_ast_violation: {rules or 'unknown'}",
+                {
+                    "security_mode": "strict",
+                    "security_report": security_report,
+                    "failure_stage": "static_ast",
+                },
+            )
+
+    try:
+        source_bytes = path.read_bytes()
+        source_text = source_bytes.decode("utf-8-sig")
+    except (OSError, UnicodeError) as exc:
+        return _failure_results(spec, protocol_name, f"source_read_failed: {type(exc).__name__}")
     request = {
         "protocol_file": str(path),
         "protocol_name": protocol_name,
@@ -111,20 +140,32 @@ def run_protocol_file(
         "spec": _spec_payload(spec),
         "price_min": get_spec_value(spec, "price_min", 0),
         "price_max": get_spec_value(spec, "price_max", 0),
+        "security_mode": security_mode,
+        "memory_limit_mb": memory_limit_mb,
+        "source": source_text,
     }
+    source_hash = hashlib.sha256(source_bytes).hexdigest()
+    if security_mode == "strict":
+        from .security import analyze_source
+        checked = analyze_source(request["source"], strict=True)
+        if not checked["passed"]:
+            return _failure_results(spec, protocol_name, "strict_ast_violation: source changed", {"failure_stage": "static_ast"})
     worker = Path(__file__).with_name("subprocess_worker.py")
-    env = os.environ.copy()
+    env = {key: value for key, value in os.environ.items() if security_mode != "strict" or key.upper() in {"SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP", "LANG", "LC_ALL"}}
+    env["OPENBLAS_NUM_THREADS"] = "1"
+    env["OMP_NUM_THREADS"] = "1"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONNOUSERSITE"] = "1"
     code_add_root = str(Path(__file__).resolve().parent.parent)
     env["PYTHONPATH"] = os.pathsep.join([code_add_root, str(path.parent), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
 
     try:
-        with tempfile.TemporaryDirectory(prefix="generic-protocol-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="generic-protocol-") as temp_dir, tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
             completed = subprocess.run(
                 [sys.executable, "-I", "-B", str(worker)],
                 input=json.dumps(request, ensure_ascii=False, separators=(",", ":"), default=_json_default),
-                capture_output=True,
+                stdout=stdout,
+                stderr=stderr,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -133,6 +174,12 @@ def run_protocol_file(
                 timeout=timeout,
                 check=False,
             )
+            if stdout.tell() > 2_000_000 or stderr.tell() > 2_000_000:
+                return _failure_results(spec, protocol_name, "subprocess_output_limit: exceeded 2 MB")
+            stdout.seek(0)
+            stderr.seek(0)
+            completed.stdout = stdout.read().decode("utf-8", errors="replace")
+            completed.stderr = stderr.read().decode("utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return _failure_results(
             spec,
@@ -170,7 +217,15 @@ def run_protocol_file(
     if not isinstance(raw, Mapping):
         return _failure_results(spec, protocol_name, "subprocess_protocol_error: result payload is not an object")
     remote = _RemoteLegacyProtocol(raw)
-    return LegacyProtocolAdapter(remote, protocol_name=protocol_name).run_many(tags, spec)
+    try:
+        results = LegacyProtocolAdapter(remote, protocol_name=protocol_name).run_many(tags, spec)
+    except Exception as exc:
+        return _failure_results(spec, protocol_name, f"invalid_protocol_output: {type(exc).__name__}: {exc}")
+    return {task: replace(result, metadata={**dict(result.metadata), "security_mode": security_mode,
+            "runtime_isolation_enforced": security_mode == "strict", "source_sha256": source_hash,
+            "measured_cpu_time_ms": response.get("measured_cpu_time_ms"),
+            "measured_wall_time_ms": response.get("measured_wall_time_ms"),
+            "resource_limits": response.get("resource_limits", {})}) for task, result in results.items()}
 
 
 def _json_default(value: Any) -> Any:

@@ -19,6 +19,7 @@ const state = {
   lastIteration: null,
   lastBatch: null,
   lastExperiment: null,
+  validationHistory: [],
   pollers: {},
   activeJobs: {},
   aiConfigVersion: 0,
@@ -148,6 +149,7 @@ function switchView(id) {
   if (!pageCopy[id]) id = "overview";
   state.currentView = id;
   if (id === "statistics" && !state.statistics) loadStatistics();
+  if (id === "validate") loadCandidateLineage();
   const [title, description] = pageCopy[id];
   $("pageTitle").textContent = title;
   $("pageCrumb").textContent = title;
@@ -1086,6 +1088,91 @@ function renderGeneratedProtocols() {
           previewText(el.dataset.preview, "Prompt 预览", "ai")),
     );
 }
+function validationStatusLabel(status) {
+  return {
+    passed: "通过",
+    failed: "失败",
+    warning: "兼容告警",
+    execution_only: "仅执行通过",
+    not_enforced: "未启用",
+    not_available: "不适用",
+    not_run: "未执行",
+  }[status] || status || "未知";
+}
+function validationStatusTone(status) {
+  return status === "passed" ? "green" : status === "warning" || status === "not_enforced" || status === "execution_only" ? "amber" : status === "failed" ? "red" : "blue";
+}
+function renderValidationStages(stages) {
+  return (stages || []).map((stage) => {
+    const toneName = validationStatusTone(stage.status);
+    const detail = typeof stage.detail === "object" ? JSON.stringify(stage.detail) : stage.detail;
+    return `<div class="sample-card"><span>${esc(stage.label || stage.id)}</span><b class="pill ${toneName}">${esc(validationStatusLabel(stage.status))}</b><small class="mono">${esc(detail || "")}</small></div>`;
+  }).join("") || '<div class="mini-note">阶段信息不可用</div>';
+}
+async function loadValidationHistory() {
+  const host = $("validationHistory");
+  if (!host) return;
+  try {
+    const query = new URLSearchParams({ scene: state.selectedScene || "", limit: "12" });
+    const data = await api(`/api/selfopt/validation-reports?${query}`);
+    state.validationHistory = data.reports || [];
+    renderValidationHistory();
+  } catch (e) {
+    host.innerHTML = `<div class="mini-note">${esc(e.message)}</div>`;
+  }
+}
+function renderValidationHistory() {
+  const host = $("validationHistory");
+  if (!host) return;
+  const rows = state.validationHistory || [];
+  host.innerHTML = rows.length ? rows.map((row) => {
+    const toneName = validationStatusTone(row.final_decision);
+    const hash = String(row.source_sha256 || "");
+    return `<div class="sample-card"><span><b>${esc(row.protocol)}</b><small>${esc(row.created_at)} · ${esc(row.task_profile)}</small></span><span><span class="pill ${toneName}">${esc(validationStatusLabel(row.final_decision))}</span><small>${esc(row.security_mode)} · ${esc(row.pass_rate)}%</small></span><button type="button" class="btn secondary" data-validation-report="${esc(row.id)}">查看</button><small class="mono" title="${esc(hash)}">SHA ${esc(hash.slice(0, 12))}</small></div>`;
+  }).join("") : '<div class="mini-note">暂无验证记录</div>';
+  host.querySelectorAll("[data-validation-report]").forEach((el) => {
+    el.onclick = async () => {
+      try {
+        const stored = await api(`/api/selfopt/validation-report?id=${encodeURIComponent(el.dataset.validationReport)}`);
+        renderValidationResult({ ...(stored.report || {}), validation_report_id: stored.id, created_at: stored.created_at });
+        $("validateOutput")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch (e) { setStatus(e.message, "error"); }
+    };
+  });
+}
+async function loadCandidateLineage() {
+  const host = $("candidateLineage");
+  if (!host) return;
+  try {
+    const data = await api("/api/selfopt/candidates");
+    host.innerHTML = `<p class="mini-note">${esc(data.note)} 共 ${data.nodes.length} 份记录。</p>` + data.nodes.map((node) => {
+      const validation = node.validation_result || {};
+      const edges = data.edges.filter((e) => e.child_id === node.candidate_id);
+      const trace = node.workflow;
+      const diagnostics = node.benchmark_result || {};
+      const diagnosticRows = (diagnostics.summary || []).map((r) => `<tr><td>${esc(r.task)}</td><td>${statPercent(r.mean_error)}</td><td>${statPercent(r.mean_f1)}</td><td>${fmtStat(r.mean_communication_bits, 0)}（候选自报）</td></tr>`).join('');
+      const formalRows = (node.formal_results || []).map((result) => `<details><summary>正式基准 ${esc(result.mode)} · ${esc(result.run_path)} · 产物审计通过</summary><div class="scroll"><table><thead><tr><th>任务 / 场景</th><th>误差 / CI</th><th>通信 bits</th><th>Pareto</th></tr></thead><tbody>${result.rows.map((r) => `<tr><td>${esc(r.task)} / ${esc(r.distribution)} / ${r.num_tags}</td><td>${statPercent(r.mean_error)}<small>${statPercent(r.error_ci95_low)} – ${statPercent(r.error_ci95_high)} / n=${r.ci_sample_size}</small></td><td>${fmtStat(r.mean_communication_bits, 0)}</td><td>${r.is_pareto ? '前沿' : r.pareto_eligible ? '可比较' : esc(r.pareto_exclusion_reasons.map(statLabel).join(' / '))}</td></tr>`).join('')}</tbody></table></div></details>`).join('');
+      const traceHtml = trace ? `<p>修复 ${trace.repair_count} 次 · 工作流 ${esc(trace.status)} · <span class="pill ${trace.audit.passed ? 'green' : 'red'}">逐次证据审计${trace.audit.passed ? '通过' : '失败'}</span></p>${trace.attempts.map((a) => `<details><summary>尝试 ${a.attempt} · ${esc(a.final_decision || a.status)} · ${esc(a.source_sha256 || '')}</summary><p>${Object.entries(a.artifact_paths).map(([name, path]) => `<a href="/api/selfopt/download?path=${encodeURIComponent(path)}" target="_blank" rel="noopener">${esc(name)}</a>`).join(' · ')}</p><pre class="console">${esc(JSON.stringify({ validation: a.validation, evaluation: a.evaluation }, null, 2))}</pre></details>`).join('')}` : '<p class="mini-note">历史记录没有逐次修复归档。</p>';
+      return `<details class="statistics-run-detail"><summary><span>${esc(node.protocol_name || node.candidate_id)} · ${esc(node.scene)} / ${esc(node.generation || '声明式候选')}</span><span class="pill ${node.source_hash_match === false ? 'red' : validationStatusTone(validation.final_decision)}">${node.source_hash_match === false ? '源码已变化' : esc(validationStatusLabel(validation.final_decision || node.status || 'not_available'))}</span></summary><p>父代 ${edges.length ? edges.map((e) => `${esc(e.parent_reference)}${e.resolution === 'unrecorded' ? '（无候选记录）' : e.resolution === 'ambiguous' ? '（存在多个同名记录）' : ''}`).join(' + ') : '记录中未提供'} → ${esc(node.protocol_name || node.candidate_id)}</p><p class="mini-note">${esc(node.model || '未记录模型')} · ${esc(node.task_profile || '未记录任务画像')} · ${esc(node.record_path)}</p>${diagnostics.scope === 'validation_diagnostics' ? `<p class="mini-note">验证诊断；通信为候选自报，未进入正式 Pareto。${esc((diagnostics.pareto_exclusion_reasons || []).map(statLabel).join(' / '))}</p><div class="scroll"><table><thead><tr><th>任务</th><th>误差</th><th>F1</th><th>通信来源</th></tr></thead><tbody>${diagnosticRows}</tbody></table></div>` : ''}${traceHtml}${formalRows}<details><summary>完整候选记录、TaskSpec 和证据路径</summary><pre class="console">${esc(JSON.stringify(node, null, 2))}</pre></details></details>`;
+    }).join('') + data.errors.map((e) => `<p class="mini-note">${esc(e.path)}：${esc(e.error)}</p>`).join('');
+  } catch (e) { host.textContent = e.message; }
+}
+function renderValidationResult(d) {
+  const runtimeStage = (d.validation_stages || []).find((x) => x.id === "runtime_isolation");
+  const semanticAvailable = d.semantic_validation === "evaluated";
+  $("validateMetrics").innerHTML = [
+    ["最终判定", validationStatusLabel(d.final_decision), d.final_decision === "passed" ? "tone-green" : d.final_decision === "failed" ? "tone-red" : "tone-amber"],
+    ["硬约束", d.validator_passed ? "通过" : "失败", d.validator_passed ? "tone-green" : "tone-red"],
+    [semanticAvailable ? "语义命中率" : "输出契约通过率", `${semanticAvailable ? (d.semantic_pass_rate ?? d.pass_rate) : (d.output_contract_pass_rate ?? d.pass_rate)}%`, "tone-teal"],
+    ["AST 规则", `${d.information_isolation?.violation_count || 0} 违规 / ${d.information_isolation?.warning_count || 0} 告警`, "tone-violet"],
+    ["运行时隔离", validationStatusLabel(runtimeStage?.status || "not_run"), `tone-${validationStatusTone(runtimeStage?.status)}`],
+    ["平均执行实测耗时", formatDurationMs(d.avg_measured_wall_time_ms), "tone-amber"],
+  ].map(([k, v, t]) => `<div class="metric ${t}"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("");
+  const output = $("validateOutput");
+  const samples = (d.samples || []).map((sample) => `<div class="sample-card"><span>第 ${sample.run} 次 · seed ${sample.seed}</span><b class="${sample.hit ? "upload-success" : "upload-error"}">${sample.semantic_hit === null ? (sample.output_contract_passed ? "契约通过，语义未评估" : "契约失败") : (sample.hit ? "命中" : "未命中")}</b><span>${formatDurationMs(sample.exec_time_ms)}</span><small>${esc(sample.failure_reason || sample.dataset_hash)}</small></div>`).join("");
+  output.innerHTML = `<div class="validation-summary"><div class="pass-ring" style="--pass:${Math.max(0, Math.min(100, Number(d.pass_rate) || 0))}%"><strong>${esc(d.pass_rate)}%</strong></div><div><h3>${esc(d.task_title || d.protocol)}</h3><p>${esc(d.scene)} / ${esc(d.protocol)} · ${esc(d.security_mode)} · 最终判定：${esc(validationStatusLabel(d.final_decision))}</p><p class="muted">${esc(d.runtime_error || d.source_sha256 || "")}</p></div></div><div class="validation-samples">${renderValidationStages(d.validation_stages)}${samples}</div><details class="validation-details"><summary>检查报告与原始结果</summary><div class="validation-tree"></div></details>`;
+  output.querySelector(".validation-tree").append(jsonNode(d));
+}
 async function runValidate() {
   $("runValidate").disabled = true;
   setStatus("验证协议", "busy");
@@ -1095,43 +1182,19 @@ async function runValidate() {
       body: JSON.stringify({
         scene: state.selectedScene,
         protocol: $("validateProtocol").value,
+        security_mode: $("validateSecurityMode").value || "strict",
         task_profile: $("validateTaskProfile").value,
         custom_task_text: customTaskTextFor("validate"),
         num_tags: Number($("validateNumTags").value),
         total_runs: Number($("validateRuns").value),
+        seed: Number($("validateSeed").value),
         price_min: Number($("validatePriceMin").value),
         price_max: Number($("validatePriceMax").value),
         relative_tolerance: Number($("validateTolerance").value),
       }),
     });
-    $("validateMetrics").innerHTML = [
-      [
-        "硬约束",
-        d.validator_passed ? "通过" : "失败",
-        d.validator_passed ? "tone-green" : "tone-red",
-      ],
-      ["功能命中", d.pass_rate + "%", "tone-teal"],
-      [
-        "信息隔离",
-        d.information_isolation_passed ? "通过" : "告警",
-        d.information_isolation_passed ? "tone-green" : "tone-amber",
-      ],
-      ["平均耗时", formatDurationMs(d.avg_time_ms), "tone-amber"],
-    ]
-      .map(
-        ([k, v, t]) =>
-          `<div class="metric ${t}"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`,
-      )
-      .join("");
-    const output = $("validateOutput");
-    output.innerHTML = `<div class="validation-summary"><div class="pass-ring" style="--pass:${Math.max(0, Math.min(100, Number(d.pass_rate) || 0))}%"><strong>${esc(d.pass_rate)}%</strong></div><div><h3>${esc(d.task_title)}</h3><p>已完成 ${d.completed_runs} / ${d.total_runs} 次验证 · ${d.num_tags} 个标签</p><p class="muted">${esc(d.runtime_error || "点击下方结构展开检查报告与样本细节。")}</p></div></div><div class="validation-samples"></div><details class="validation-details"><summary>检查报告与原始结果</summary><div class="validation-tree"></div></details>`;
-    output.querySelector(".validation-samples").innerHTML = (d.samples || [])
-      .map(
-        (sample) =>
-          `<div class="sample-card"><span>第 ${sample.run} 次</span><b class="${sample.hit ? "upload-success" : "upload-error"}">${sample.hit ? "命中" : "未命中"}</b><span>${formatDurationMs(sample.exec_time_ms)}</span></div>`,
-      )
-      .join("");
-    output.querySelector(".validation-tree").append(jsonNode(d));
+    renderValidationResult(d);
+    await loadValidationHistory();
     setStatus("验证完成");
   } catch (e) {
     setStatus(e.message, "error");
@@ -1408,6 +1471,8 @@ async function loadState(keepScene = true) {
   )
     state.selectedScene = d.scenes[0].name;
   renderAll();
+  loadValidationHistory();
+  loadCandidateLineage();
   setStatus("就绪");
 }
 function syncSceneFrom(id) {
@@ -1420,6 +1485,7 @@ function syncSceneFrom(id) {
   renderOverview();
   renderAssets();
   renderPrompts();
+  loadValidationHistory();
 }
 function openManual(page = state.currentView) {
   $("manualTitle").textContent =
@@ -1537,6 +1603,8 @@ function bind() {
     };
   });
   $("runValidate").onclick = runValidate;
+  if ($("refreshValidationHistory")) $("refreshValidationHistory").onclick = loadValidationHistory;
+  if ($("refreshCandidateLineage")) $("refreshCandidateLineage").onclick = loadCandidateLineage;
   $("runIteration").onclick = runIteration;
   $("useTopIterParents").onclick = fillRecommendedParents;
   $("iterateParents").oninput = renderParentPoolBars;

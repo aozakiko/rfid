@@ -18,6 +18,7 @@ from statistics import mean
 
 from stat_protocols.contracts import CostModel, TaskSpec
 from .experiments import MAIN_PROTOCOLS, ABLATION_PROTOCOLS, SENSITIVITY_PROTOCOLS, pareto_front
+from .provenance import artifact_hashes, reproducibility_key, source_hashes
 from .runner import run_benchmark, write_results, summarize_cases, summarize_reports, mean_ci
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +35,14 @@ def save_csv(path, rows):
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]) if rows else ["protocol"])
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _artifact_display_path(path: Path) -> str:
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        # Smoke and CI callers may intentionally write outside the repository.
+        return str(path)
 
 
 def source_inventory():
@@ -101,11 +110,12 @@ def hypothesis_results(report_sets):
 
 
 def make_dashboard(report_sets, manifest, hypotheses, inventory):
+    from .evidence import comparison_rows
     modes = {}
     for mode, reports in report_sets.items():
-        summaries = summarize_cases(reports)
+        summaries = comparison_rows(reports)
         mode_path = Path(manifest["output_dir"]) / mode
-        modes[mode] = {"rows": summaries, "grouped": True, "artifacts": [dict(name=p.name, path=p.relative_to(ROOT).as_posix(), size=p.stat().st_size, kind=p.suffix[1:]) for p in sorted(mode_path.glob("*")) if p.is_file()]}
+        modes[mode] = {"rows": summaries, "grouped": True, "artifacts": [dict(name=p.name, path=_artifact_display_path(p), size=p.stat().st_size, kind=p.suffix[1:]) for p in sorted(mode_path.glob("*")) if p.is_file()]}
     return {"available": bool(modes), "schema_version": VERSION, "modes": modes, "manifest": manifest, "hypotheses": hypotheses, "inventory": inventory}
 
 
@@ -248,6 +258,9 @@ H2 使用逐 seed 配对的 F1 损失和通信节省。默认自适应阈值 1 �
 def run_suite(output, seed_count=20, sizes=(1000, 10000, 100000), llm_candidate=None, progress=print):
     started = time.perf_counter()
     output = output.resolve()
+    if (output / "manifest.json").exists() or any(output.glob("*/*_reports.json")):
+        raise ValueError("output already contains an experiment; select a new output directory")
+    sources_at_start = source_hashes(ROOT)
     seeds = list(range(seed_count))
     distributions = ("single_peak", "multi_peak", "gaussian", "long_tail", "uniform")
     spec = TaskSpec(split="main")
@@ -271,26 +284,42 @@ def run_suite(output, seed_count=20, sizes=(1000, 10000, 100000), llm_candidate=
         write_results(reports, folder / f"{mode}_reports.json", folder / f"{mode}_summary.csv")
         cases_summary = summarize_cases(reports)
         save_csv(folder / f"{mode}_cases.csv", cases_summary)
-        save_json(folder / f"{mode}_pareto.json", pareto_front(reports))
+        from .evidence import comparison_rows
+        save_json(folder / f"{mode}_pareto.json", [r for r in comparison_rows(reports) if r["is_pareto"]])
+    from .splits import audit_splits
+    split_audit = audit_splits([r for rows in report_sets.values() for r in rows])
+    save_json(output / "split_audit.json", split_audit)
+    if not split_audit["passed"]:
+        raise ValueError("blind dataset overlap audit failed; suite was not published")
     progress("Generating figures, hypothesis checks, provenance and delivery report")
     make_figures(output, report_sets)
-    sources = sorted({*ROOT.glob("stat_protocols/*.py"), *ROOT.glob("benchmark/*.py")})
+    sources = source_hashes(ROOT)
+    if sources != sources_at_start:
+        raise RuntimeError("source files changed during the experiment; rerun with frozen sources")
     try:
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     except (OSError, subprocess.CalledProcessError):
         revision = "unknown"
-    manifest = dict(schema_version=VERSION, seeds=seeds, blind_seeds=list(range(100, 100 + seed_count)), sizes=list(sizes), distributions=list(distributions), output_dir=str(output), revision=revision, python=sys.version, platform=platform.platform(), cost_model=CostModel().to_dict(), source_hashes={p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}, llm_status="record_supplied" if llm_candidate else "not_measured_missing_candidate", elapsed_s=round(time.perf_counter() - started, 2), run_counts={m: len(r) for m, r in report_sets.items()})
+    manifest = dict(schema_version=VERSION, seeds=seeds, blind_seeds=list(range(100, 100 + seed_count)), sizes=list(sizes), distributions=list(distributions), output_dir=str(output), revision=revision, python=sys.version, platform=platform.platform(), cost_model=CostModel().to_dict(), source_hashes=sources, llm_status="record_supplied" if llm_candidate else "not_measured_missing_candidate", elapsed_s=round(time.perf_counter() - started, 2), run_counts={m: len(r) for m, r in report_sets.items()})
+    manifest["task_specs"] = {mode: [{"spec": spec.to_dict(), "seeds": list(case_seeds), "distributions": list(dist), "sizes": list(sizes), "protocols": list(protocols)} for spec, case_seeds, dist, protocols in cases] for mode, cases in plans.items()}
+    manifest["python_version"] = platform.python_version()
+    manifest["split_audit"] = split_audit
+    from .run_config import _package_versions
+    manifest["package_versions"] = _package_versions()
     if llm_candidate:
-        manifest["llm_record"] = {k: llm_candidate.get(k) for k in ("candidate_id", "model", "prompt_hash", "response_hash", "genotype", "provenance", "created_at", "usage", "successful_requests", "validation_error")}
+        manifest["llm_record"] = {k: llm_candidate.get(k) for k in ("candidate_id", "model", "prompt_hash", "response_hash", "genotype", "provenance", "created_at", "usage", "successful_requests", "validation_error", "status", "validation_result")}
         manifest["llm_summary"] = summarize_reports(r for r in report_sets["main"] if r.protocol == "llm_random")
     inventory = source_inventory()
     hypotheses = hypothesis_results(report_sets)
-    save_json(output / "manifest.json", manifest)
     save_json(output / "mechanism_inventory.json", inventory)
     save_json(output / "hypotheses.json", hypotheses)
     write_report(output, manifest, hypotheses, inventory)
+    manifest["reproducibility_key"] = reproducibility_key(manifest)
+    manifest["artifact_hash_scope"] = "all published files except manifest.json; dashboard included"
     dashboard = make_dashboard(report_sets, manifest, hypotheses, inventory)
     save_json(output / "dashboard.json", dashboard)
+    manifest["artifact_hashes"] = artifact_hashes(output)
+    save_json(output / "manifest.json", manifest)
     progress(f"Completed in {manifest['elapsed_s']} s; reports={manifest['run_counts']}")
     return manifest
 

@@ -164,6 +164,26 @@ class LLMRandomProtocol(_BaseProtocol):
         from .genotype import compile_candidate
         if not self.candidate:
             return {t: RunResult(self.name, t, None, None, 0, 0, 0, 0, 0, spec.seed, failure_reason="missing_real_llm_candidate: import a generation record with source/prompt/model provenance") for t in spec.tasks}
+        validation = self.candidate.get("validation_result") if isinstance(self.candidate, dict) else None
+        if isinstance(validation, dict) and validation.get("is_valid") is False:
+            reason = validation.get("failure_reason") or validation.get("report") or "candidate validation gate failed"
+            return {
+                t: RunResult(
+                    self.name, t, None, None, 0, 0, 0, 0, 0, spec.seed,
+                    failure_reason=f"candidate_validation_failed: {reason}",
+                    metadata={"cost_status": "missing", "validation_gate": "rejected"},
+                )
+                for t in spec.tasks
+            }
+        if isinstance(self.candidate, dict) and self.candidate.get("status") == "failed":
+            return {
+                t: RunResult(
+                    self.name, t, None, None, 0, 0, 0, 0, 0, spec.seed,
+                    failure_reason="candidate_validation_failed: record status=failed",
+                    metadata={"cost_status": "missing", "validation_gate": "rejected"},
+                )
+                for t in spec.tasks
+            }
         try:
             protocol = compile_candidate(self.candidate, name=self.name)
         except ValueError as exc:

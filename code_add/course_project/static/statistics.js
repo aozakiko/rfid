@@ -17,6 +17,11 @@ const statisticsLabels = {
   fixed_2: "固定 2 轮", fixed_3: "固定 3 轮", fixed_4: "固定 4 轮",
   adaptive: "自适应 τ=1", adaptive_t05: "自适应 τ=0.5", adaptive_t20: "自适应 τ=2",
   random_sketch_control: "随机参数（非 LLM）", llm_random: "真实 LLM 单次候选",
+  execution_failed: "执行失败", communication_cost_missing: "通信成本缺失",
+  communication_cost_not_independently_measured: "通信成本为候选自报",
+  error_unavailable: "误差不可用", validation_failed: "验证门禁失败", multiple_scenarios: "跨场景汇总",
+  duplicate_seed: "seed 重复", dataset_hash_missing: "缺少数据 hash",
+  experiment_audit_failed: "实验未完成或审计失败",
 };
 const statisticsColors = ["#16877e", "#356ce8", "#7c62ca", "#b77a22", "#c24452", "#26875b", "#526b84", "#b45c8d", "#488ba2", "#926c42"];
 
@@ -40,28 +45,6 @@ function statSelectedRows() {
     ($("statisticsScenario").value === "all" || statScenario(row) === $("statisticsScenario").value),
   );
 }
-function statAggregate(rows) {
-  const grouped = new Map();
-  rows.forEach((row) => {
-    if (!grouped.has(row.protocol)) grouped.set(row.protocol, []);
-    grouped.get(row.protocol).push(row);
-  });
-  return [...grouped].map(([protocol, values]) => {
-    const runs = values.reduce((n, row) => n + row.runs, 0);
-    const weighted = (field) => {
-      const valid = values.filter((v) => v[field] !== null && Number.isFinite(v[field]));
-      const weight = valid.reduce((n, v) => n + v.runs, 0);
-      return weight ? valid.reduce((n, v) => n + v[field] * v.runs, 0) / weight : null;
-    };
-    const output = { protocol, runs, failures: values.reduce((n, v) => n + v.failed_runs, 0), groups: values.length };
-    ["mean_error", "mean_f1", "quality_pass_rate", "mean_communication_bits", "mean_reader_bits", "mean_tag_bits", "mean_slots", "mean_frames", "mean_rounds"].forEach((key) => output[key] = weighted(key));
-    output.successRate = runs ? 1 - output.failures / runs : 0;
-    output.ci = values.length === 1 ? [values[0].error_ci95_low, values[0].error_ci95_high] : null;
-    output.p95 = values.length === 1 ? values[0].p95_error : null;
-    output.worst = values.length === 1 ? values[0].worst_error : null;
-    return output;
-  }).sort((a, b) => (b.successRate - a.successRate) || (a.mean_communication_bits - b.mean_communication_bits));
-}
 function statFillSelect(id, values, fallback, includeAll = true, label = statLabel) {
   const el = $(id), previous = el.value;
   const choices = [...new Set(values.map(String))];
@@ -77,28 +60,66 @@ function renderStatistics() {
   statFillSelect("statisticsScale", all.map((r) => r.num_tags).sort((a, b) => a - b), "1000");
   statFillSelect("statisticsScenario", all.map(statScenario), statScenario(all[0] || {}), true, (s) => s.split("|").map((v) => statPercent(Number(v))).join(" / "));
   statisticsUI.initialized = true;
-  const selected = statSelectedRows(), rows = statAggregate(selected);
-  const manifest = state.statistics.manifest;
-  const cases = new Set(selected.map((r) => `${r.distribution}:${r.num_tags}:${statScenario(r)}`));
-  const failed = rows.reduce((n, r) => n + r.failures, 0);
-  $("statisticsMetrics").innerHTML = [
-    ["正式实验 seeds", manifest.seeds.length, "tone-teal"],
-    ["当前条件 / 协议", `${cases.size} / ${rows.length}`, "tone-green"],
-    ["当前逐 seed 结果", rows.reduce((n, r) => n + r.runs, 0), "tone-violet"],
-    ["失败 / 待实测", failed, "tone-amber"],
-  ].map(([label, value, toneName]) => `<div class="metric ${toneName}"><span>${label}</span><strong>${esc(value)}</strong></div>`).join("");
-  $("statisticsFilterNote").textContent = cases.size === 1
-    ? "单场景同 seed 配对比较；置信区间来自独立 seed。各任务行共享一次采集费用，不能跨任务重复求和。"
-    : "当前为跨场景描述性平均；选择单一分布、规模和扰动条件后显示独立 seed 的 95% CI。";
-  drawStatisticsScatter(rows);
-  renderStatisticsTable(rows);
-  renderStatisticsInsights(selected);
-  renderStatisticsArtifacts();
+  renderStatisticsProvenance();
+  loadStatisticsComparison();
+}
+let comparisonToken = 0;
+async function loadStatisticsComparison() {
+  const token = ++comparisonToken;
+  const params = new URLSearchParams({ mode: $("statisticsMode").value, task: $("statisticsTask").value,
+    distribution: $("statisticsDistribution").value, num_tags: $("statisticsScale").value,
+    scenario: $("statisticsScenario").value, axis: $("statisticsCostAxis").value });
+  try {
+    const result = await api(`/api/statistics/comparison?${params}`);
+    if (token !== comparisonToken) return;
+    const rows = result.rows;
+    $("statisticsMetrics").innerHTML = [
+      ["实验 seeds", state.statistics.manifest.seeds.length, "tone-teal"],
+      ["当前条件 / 协议", `${result.case_count} / ${rows.length}`, "tone-green"],
+      ["逐 seed 结果", result.raw_count, "tone-violet"],
+      ["失败 / 待实测", rows.reduce((n, r) => n + r.failures, 0), "tone-amber"],
+    ].map(([label, value, toneName]) => `<div class="metric ${toneName}"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
+    $("statisticsFilterNote").textContent = result.single_scenario
+      ? "同场景比较；后端计算置信区间与 Pareto，缺少成本、执行失败或验证失败会明确排除。"
+      : "跨场景描述性汇总；不绘制 Pareto 前沿。请选择单一分布、规模和扰动查看前沿与置信区间。";
+    drawStatisticsScatter(rows);
+    renderStatisticsTable(rows);
+    renderStatisticsInsights(statSelectedRows());
+    renderStatisticsArtifacts();
+  } catch(e) { if (token === comparisonToken) $("statisticsScatter").textContent = e.message; }
+}
+
+function renderStatisticsProvenance() {
+  const host = $("statisticsProvenance");
+  const pill = $("statisticsAuditStatus");
+  if (!host || !state.statistics?.available) return;
+  const provenance = state.statistics.provenance || {};
+  const audit = provenance.audit || {};
+  const passed = audit.passed === true;
+  const unavailable = audit.status === "not_available";
+  if (pill) {
+    pill.textContent = passed ? "审计通过" : unavailable ? "未审计" : "审计失败";
+    pill.className = `pill ${passed ? "green" : unavailable ? "amber" : "red"}`;
+  }
+  const mismatches = [...(audit.mismatched || []), ...(audit.missing || []), ...(audit.unexpected || [])];
+  host.innerHTML = [
+    ["reproducibility key", provenance.reproducibility_key || "—"],
+    ["源码 revision", provenance.revision || "unknown"],
+    ["已登记产物", `${provenance.artifact_hash_count || 0} 个 SHA-256`],
+    ["审计结果", passed ? "manifest 与当前文件一致" : (audit.error || `${mismatches.length} 个产物异常`)],
+  ].map(([label, value]) => `<span class="tag"><b>${esc(label)}</b><small class="mono">${esc(value)}</small></span>`).join("");
+  const manifest = state.statistics.manifest || {};
+  $("statisticsManifestDetails").textContent = JSON.stringify({ task_specs: manifest.task_specs,
+    source_hashes: manifest.source_hashes, python_version: manifest.python_version,
+    package_versions: manifest.package_versions, reproduction_command: manifest.reproduction_command || state.statistics.commands,
+    source_snapshot: manifest.source_snapshot, frozen_llm_path: manifest.frozen_llm_path, audit }, null, 2);
+  const files = state.statistics.delivery_artifacts || [];
+  $("statisticsDeliveryArtifacts").innerHTML = files.map((a) => `<a class="statistics-artifact" href="/api/selfopt/download?path=${encodeURIComponent(a.path)}"><span class="pill">${esc(a.kind.toUpperCase())}</span><b>${esc(a.name)}</b><small>下载 · ${esc(bytes(a.size))}</small></a>`).join("");
 }
 function drawStatisticsScatter(rows) {
   const metric = $("statisticsCostAxis").value;
-  const valid = rows.filter((r) => r.successRate === 1 && r.mean_error !== null && r[metric] > 0);
-  const front = valid.filter((r) => !valid.some((o) => o !== r && o[metric] <= r[metric] && o.mean_error <= r.mean_error && (o[metric] < r[metric] || o.mean_error < r.mean_error)));
+  const valid = rows.filter((r) => r.pareto_eligible && r.mean_error !== null && r[metric] > 0);
+  const front = valid.filter((r) => r.is_pareto);
   const minX = Math.max(.5, Math.min(...valid.map((r) => r[metric]), 1e12) * .7);
   const maxX = Math.max(minX * 2, ...valid.map((r) => r[metric] * 1.3));
   const maxY = Math.max(.01, ...valid.map((r) => r.mean_error * 1.2));
@@ -107,18 +128,22 @@ function drawStatisticsScatter(rows) {
   const ticks = [minX, Math.sqrt(minX * maxX), maxX];
   const yTicks = [0, maxY / 2, maxY];
   const label = $("statisticsCostAxis").selectedOptions[0].textContent;
-  const coordinates = [...front].sort((a, b) => a[metric] - b[metric]).map((r) => `${px(r[metric])},${py(r.mean_error)}`).join(" ");
+  const frontGroups = [...new Set(front.map((r) => r.pareto_group))];
+  const frontLines = frontGroups.map((group) => {
+    const coordinates = front.filter((r) => r.pareto_group === group).sort((a, b) => a[metric] - b[metric]).map((r) => `${px(r[metric])},${py(r.mean_error)}`).join(" ");
+    return `<polyline points="${coordinates}" fill="none" stroke="#172f4b" stroke-dasharray="5 5" opacity=".55"/>`;
+  }).join("");
   $("statisticsScatter").innerHTML = valid.length ? `<svg viewBox="0 0 720 335" role="img" aria-label="${esc(label)}与误差 Pareto 图">
     ${yTicks.map((v) => `<line x1="70" x2="675" y1="${py(v)}" y2="${py(v)}" stroke="#e5ecf4"/><text x="60" y="${py(v) + 4}" text-anchor="end">${esc(statPercent(v))}</text>`).join("")}
     ${ticks.map((v) => `<text x="${px(v)}" y="304" text-anchor="middle">${esc(fmtStat(v, 0))}</text>`).join("")}
-    <polyline points="${coordinates}" fill="none" stroke="#172f4b" stroke-dasharray="5 5" opacity=".55"/>
+    ${frontLines}
     ${valid.map((r) => {
       const i = rows.indexOf(r), isFront = front.includes(r);
       return `<circle cx="${px(r[metric])}" cy="${py(r.mean_error)}" r="${isFront ? 8 : 6}" fill="${statisticsColors[i % statisticsColors.length]}" stroke="${isFront ? '#172f4b' : 'white'}" stroke-width="1.5" tabindex="0" role="button" data-stat-protocol="${esc(r.protocol)}" aria-label="查看 ${esc(statLabel(r.protocol))} 详情"><title>${esc(statLabel(r.protocol))} | ${esc(label)} ${esc(fmtStat(r[metric]))} | 误差 ${esc(statPercent(r.mean_error))}${isFront ? ' | Pareto 前沿' : ''}</title></circle>`;
     }).join("")}
     <text x="365" y="330" text-anchor="middle">${esc(label)}（对数轴，越低越好）</text>
     <text x="16" y="160" transform="rotate(-90 16 160)" text-anchor="middle">${$("statisticsTask").value === "top_k" ? "1−F1" : "相对误差"}（越低越好）</text>
-  </svg>` : '<div class="mini-note">没有可绘制的成功结果；失败原因可在下方查看。</div>';
+  </svg>` : '<div class="mini-note">当前筛选没有可参与前沿比较的结果。请选择单一场景，或在下表核对排除原因。</div>';
   $("statisticsPointCount").textContent = `${valid.length} 个点 · ${front.length} 个前沿点`;
   $("statisticsLegend").innerHTML = valid.map((r) => `<button type="button" data-stat-protocol="${esc(r.protocol)}"><i style="background:${statisticsColors[rows.indexOf(r) % statisticsColors.length]}"></i>${esc(statLabel(r.protocol))}${front.includes(r) ? ' ◇' : ''}</button>`).join("");
   bindStatProtocolButtons($("statisticsScatter"));
@@ -138,7 +163,7 @@ function renderStatisticsTable(rows) {
   $("statisticsRows").innerHTML = rows.map((r) => {
     const ci = r.ci && r.ci[0] !== null ? (topK ? [1 - r.ci[1], 1 - r.ci[0]] : r.ci) : null;
     const quality = r.mean_error === null ? '<span class="pill amber">待实测 / 失败</span>' : `${topK ? 'F1 ' + statPercent(r.mean_f1) : statPercent(r.mean_error)}${ci ? `<small class="statistics-ci">95% CI ${statPercent(Math.max(0, ci[0]))} – ${statPercent(topK ? Math.min(1, ci[1]) : ci[1])}</small>` : ''}`;
-    return `<tr><td><button class="statistics-protocol-link" type="button" data-stat-protocol="${esc(r.protocol)}">${esc(statLabel(r.protocol))}</button><small class="statistics-ci">${esc(r.protocol)}</small></td><td>${esc(statPercent(r.successRate))}<small class="statistics-ci">${r.runs} 次执行<br>精度达标 ${statPercent(r.quality_pass_rate)}</small></td><td>${quality}${r.p95 !== null && r.p95 !== undefined ? `<small class="statistics-ci">误差 P95 ${statPercent(r.p95)}<br>最坏 ${statPercent(r.worst)}</small>` : ''}</td><td>${r.successRate ? esc(fmtStat(r.mean_communication_bits, 0)) : '—'}</td><td>${r.successRate ? `${fmtStat(r.mean_reader_bits, 0)} / ${fmtStat(r.mean_tag_bits, 0)}` : '—'}</td><td>${r.successRate ? `${fmtStat(r.mean_slots, 0)} / ${fmtStat(r.mean_frames)} / ${fmtStat(r.mean_rounds)}` : '—'}</td><td>${r.failures}</td></tr>`;
+    return `<tr><td><button class="statistics-protocol-link" type="button" data-stat-protocol="${esc(r.protocol)}">${esc(statLabel(r.protocol))}</button><small class="statistics-ci">${esc(r.protocol)}</small><small class="statistics-ci">${esc((r.pareto_exclusion_reasons || []).map(statLabel).join(" / "))}${r.is_pareto ? " ◇ Pareto" : ""}</small></td><td>${esc(statPercent(r.successRate))}<small class="statistics-ci">${r.runs} 次执行<br>精度达标 ${statPercent(r.quality_pass_rate)}</small></td><td>${quality}${r.p95 !== null && r.p95 !== undefined ? `<small class="statistics-ci">误差 P95 ${statPercent(r.p95)}<br>最坏 ${statPercent(r.worst)}</small>` : ''}</td><td>${r.successRate ? esc(fmtStat(r.mean_communication_bits, 0)) : '—'}</td><td>${r.successRate ? `${fmtStat(r.mean_reader_bits, 0)} / ${fmtStat(r.mean_tag_bits, 0)}` : '—'}</td><td>${r.successRate ? `${fmtStat(r.mean_slots, 0)} / ${fmtStat(r.mean_frames)} / ${fmtStat(r.mean_rounds)}` : '—'}</td><td>${r.failures}<small>${esc((r.failure_reasons || []).join(" / "))}</small></td></tr>`;
   }).join("") || empty(7);
   bindStatProtocolButtons($("statisticsRows"));
 }
@@ -201,6 +226,7 @@ async function loadStatistics() {
       const record = state.statistics.manifest.llm_record;
       if (!statisticsUI.candidateId && record?.candidate_id) selectStatisticsCandidate({ candidate_id: record.candidate_id, valid: !record.validation_error, path: `Experiments/stat_protocols/llm/${record.candidate_id}/candidate.json` });
       renderStatistics();
+      loadConfigRun();
     } catch (e) {
       $("statisticsInsights").innerHTML = `<p class="mini-note">${esc(e.message)} <button type="button" class="btn secondary" id="retryStatistics">重新读取</button></p>`;
       $("retryStatistics").onclick = loadStatistics;
@@ -250,6 +276,13 @@ async function submitStatisticsJob(kind) {
   }
 }
 function bindStatistics() {
+  $("runEngineeringPipeline").onclick = submitEngineeringPipeline;
+  $("reloadEngineeringPipeline").onclick = () => loadEngineeringPipeline();
+  $("pipelineRunSelect").onchange = () => loadEngineeringPipeline($("pipelineRunSelect").value);
+  $("runConfigExperiment").onclick = () => submitConfigJob(false);
+  $("rebuildConfigEvidence").onclick = () => submitConfigJob(true);
+  $("reloadConfigRun").onclick = () => loadConfigRun();
+  $("configRunSelect").onchange = () => loadConfigRun($("configRunSelect").value);
   ["statisticsMode", "statisticsTask", "statisticsDistribution", "statisticsScale", "statisticsScenario", "statisticsCostAxis"].forEach((id) => $(id).onchange = () => {
     renderStatistics();
     showStatisticsDetails(statisticsUI.protocol, 1);
@@ -272,4 +305,92 @@ function bindStatistics() {
     } catch (e) { $("statisticsJobLog").textContent = e.message; }
     event.target.value = "";
   };
+}
+
+let selectedConfigRun = "";
+let configPoller = null;
+function configList(id, numeric = false) {
+  const values = $(id).value.split(",").map((s) => s.trim());
+  if (values.some((v) => !v)) throw new Error("逗号分隔的配置中有空值");
+  if (!numeric) return values;
+  const numbers = values.map(Number);
+  if (numbers.some((n) => !Number.isSafeInteger(n))) throw new Error("seeds 和规模必须填写整数");
+  return numbers;
+}
+async function loadConfigRun(runId = "") {
+  try {
+    const data = await api(`/api/statistics/config-runs${runId ? '?run_id=' + encodeURIComponent(runId) : ''}`);
+    $("configRunSelect").innerHTML = (data.runs || []).map((r) => `<option value="${esc(r.run_id)}">${esc(r.run_id)}</option>`).join("") || '<option value="">暂无记录</option>';
+    if (!data.available) { $("configRunEvidence").textContent = "尚无配置化实验记录。"; return; }
+    selectedConfigRun = data.run_id;
+    $("configRunSelect").value = data.run_id;
+    $("rebuildConfigEvidence").disabled = !data.audit.passed || Boolean(configPoller);
+    const rows = data.rows;
+    $("configRunEvidence").innerHTML = `<p><span class="pill ${data.audit.passed ? 'green' : 'red'}">${data.audit.passed ? '原始产物审计通过' : '原始产物审计失败'}</span> ${esc(data.run_id)}</p>
+      <p class="mini-note mono">复现身份 ${esc(data.manifest.reproducibility_key)}</p>
+      <p>数据划分检查：${esc(data.manifest.split_audit?.status || '历史记录未检查')} · 重叠 ${data.manifest.split_audit?.overlap_count ?? '—'}</p>
+      <details><summary>完整配置、TaskSpec、运行命令和审计</summary><pre class="console">${esc(JSON.stringify({ config: data.manifest.config, task_specs: data.manifest.task_specs, command: data.manifest.command, split_audit: data.manifest.split_audit, reference_artifact_hashes: data.manifest.reference_artifact_hashes, environment: { python: data.manifest.python_version, packages: data.manifest.package_versions }, source_hashes: data.manifest.source_hashes, audit: data.audit }, null, 2))}</pre></details>
+      <div class="scroll"><table><thead><tr><th>任务 / 场景</th><th>协议</th><th>执行 / 质量达标</th><th>误差均值 / 95% CI / P95</th><th>通信 bits</th><th>Pareto / 排除原因</th></tr></thead><tbody>${rows.slice(0, 200).map((r) => `<tr><td>${esc(statLabel(r.task))}<small>${esc(statLabel(r.distribution))} / ${r.num_tags}<br>缺失 ${statPercent(r.missing_rate)} / 噪声 ${statPercent(r.noise_rate)} / 异常 ${statPercent(r.extreme_rate)} / ${esc(r.split)}</small></td><td>${esc(statLabel(r.protocol))}</td><td>${statPercent(r.success_rate)} / ${statPercent(r.quality_pass_rate)}<small>${r.runs} seeds / ${r.failed_runs} 失败</small></td><td>${statPercent(r.mean_error)}<small>CI ${statPercent(r.error_ci95_low)} – ${statPercent(r.error_ci95_high)}<br>P95 ${statPercent(r.p95_error)}</small></td><td>${fmtStat(r.mean_communication_bits, 0)}</td><td>${r.is_pareto ? '◇ 前沿' : r.pareto_eligible ? '可比较' : esc(r.pareto_exclusion_reasons.map(statLabel).join(' / '))}<small>${esc(r.failure_reasons.join(' / '))}</small></td></tr>`).join('')}</tbody></table></div>
+      <p class="mini-note">共 ${rows.length} 行，页面最多显示 200 行；完整数据见 CSV/JSON。Top-k 误差为 1−F1；其他任务为相对误差。</p>
+      <div class="statistics-artifacts">${statAssetButtons(data.artifacts)}</div>`;
+    $("configRunEvidence").querySelectorAll("[data-stat-artifact]").forEach((el) => { el.onclick = () => renderAssetPreview(el.dataset.statArtifact, "configAssetPreview"); });
+  } catch (e) { $("configRunEvidence").textContent = e.message; }
+}
+async function pollConfigJob(id) {
+  try {
+    const { job } = await api(`/api/selfopt/job?id=${encodeURIComponent(id)}`);
+    $("configJobLog").textContent = `${job.status} · ${job.progress}% · ${job.elapsed_s}s\n${job.logs.join('\n')}${job.error ? '\n' + job.error : ''}`;
+    if (job.status !== "success" && job.status !== "failed") { configPoller = setTimeout(() => pollConfigJob(id), 1500); return; }
+    configPoller = null;
+    await loadConfigRun(job.result?.run_id || '');
+  } catch (e) { $("configJobLog").textContent = e.message; configPoller = null; }
+  $("runConfigExperiment").disabled = false;
+}
+async function submitConfigJob(rebuild) {
+  $("runConfigExperiment").disabled = true;
+  $("rebuildConfigEvidence").disabled = true;
+  try {
+    const config = rebuild ? null : { name: "web-reproducible", profiles: configList("configProfiles"), protocols: configList("configProtocols"),
+      seeds: configList("configSeeds", true), sizes: configList("configSizes", true), distributions: configList("configDistributions"), split: $("configSplit").value,
+      price_min: Number($("configMin").value), price_max: Number($("configMax").value), missing_rate: Number($("configMissing").value),
+      noise_rate: Number($("configNoise").value), extreme_rate: Number($("configExtreme").value) };
+    const { job } = await api(`/api/statistics/${rebuild ? 'rebuild' : 'run-config'}`, { method: "POST", body: JSON.stringify(rebuild ? { run_id: selectedConfigRun } : { config }) });
+    configPoller = true;
+    pollConfigJob(job.id);
+  } catch (e) { $("configJobLog").textContent = e.message; $("runConfigExperiment").disabled = false; $("rebuildConfigEvidence").disabled = !selectedConfigRun; }
+}
+
+async function loadEngineeringPipeline(runId = "") {
+  try {
+    const data = await api(`/api/statistics/pipelines${runId ? '?run_id=' + encodeURIComponent(runId) : ''}`);
+    $("pipelineRunSelect").innerHTML = (data.runs || []).map((r) => `<option value="${esc(r.run_id)}">${esc(r.run_id)}</option>`).join('') || '<option value="">暂无流水线</option>';
+    if (!data.available) { $("pipelineEvidence").textContent = '尚无流水线记录。'; return; }
+    $("pipelineRunSelect").value = data.run_id;
+    const manifest = data.manifest;
+    $("pipelineEvidence").innerHTML = `<p><span class="pill ${data.audit.passed ? 'green' : 'red'}">${esc(manifest.status)} · 产物审计${data.audit.passed ? '通过' : '未通过'}</span> ${esc(data.run_id)}</p><p>盲测双次复现：${manifest.replay?.passed ? '通过' : '未通过 / 尚未执行'}</p><div class="scroll"><table><thead><tr><th>阶段</th><th>状态</th><th>原始结果数</th><th>划分审计 / 重叠</th></tr></thead><tbody>${(manifest.stages || []).map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.status)}</td><td>${s.run_count ?? '—'}</td><td>${esc(s.split_audit?.status || '等待执行')} / ${s.split_audit?.overlap_count ?? '—'}</td></tr>`).join('')}</tbody></table></div><details><summary>完整流水线配置、种子组、阶段审计与确定性核对</summary><pre class="console">${esc(JSON.stringify({ manifest, audit: data.audit }, null, 2))}</pre></details><details><summary>原始结果、图表与源码快照下载（${data.artifacts.length} 项）</summary><div class="statistics-artifacts">${data.artifacts.map((a) => `<a class="statistics-artifact" href="/api/selfopt/download?path=${encodeURIComponent(a.path)}">${esc(a.name)}</a>`).join('')}</div></details>`;
+  } catch (e) { $("pipelineEvidence").textContent = e.message; }
+}
+
+async function submitEngineeringPipeline() {
+  $("runEngineeringPipeline").disabled = true;
+  try {
+    const config = { name: 'web-engineering-pipeline', profiles: configList('configProfiles'), protocols: configList('configProtocols'),
+      seeds: configList('configSeeds', true), sizes: configList('configSizes', true), distributions: configList('configDistributions'),
+      split: 'development', price_min: Number($("configMin").value), price_max: Number($("configMax").value),
+      missing_rate: Number($("configMissing").value), noise_rate: Number($("configNoise").value), extreme_rate: Number($("configExtreme").value) };
+    const payload = { config };
+    if ($('pipelineValidationSeeds').value.trim()) payload.validation_seeds = configList('pipelineValidationSeeds', true);
+    if ($('pipelineBlindSeeds').value.trim()) payload.blind_seeds = configList('pipelineBlindSeeds', true);
+    const { job } = await api('/api/statistics/run-pipeline', { method: 'POST', body: JSON.stringify(payload) });
+    const poll = async () => {
+      try {
+        const { job: latest } = await api(`/api/selfopt/job?id=${encodeURIComponent(job.id)}`);
+        $('pipelineJobLog').textContent = `${latest.status} · ${latest.stage} · ${latest.elapsed_s}s\n${latest.logs.join('\n')}${latest.error ? '\n' + latest.error : ''}`;
+        if (!['success', 'failed'].includes(latest.status)) { setTimeout(poll, 1500); return; }
+        await loadEngineeringPipeline(latest.result?.run_id || '');
+      } catch (e) { $('pipelineJobLog').textContent = e.message; }
+      $('runEngineeringPipeline').disabled = false;
+    };
+    poll();
+  } catch (e) { $('pipelineJobLog').textContent = e.message; $('runEngineeringPipeline').disabled = false; }
 }

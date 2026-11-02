@@ -1,0 +1,15 @@
+{
+  "name": "engineering-regression",
+  "profiles": ["mean_estimation", "variance_estimation", "cardinality_estimation", "top_k"],
+  "protocols": ["polling", "single_serial", "shared_sketch", "adaptive"],
+  "distributions": ["uniform", "long_tail"],
+  "sizes": [1000],
+  "seeds": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+  "output_dir": "Experiments/stat_protocols/engineering",
+  "price_min": 1,
+  "price_max": 64,
+  "missing_rate": 0.0,
+  "noise_rate": 0.0,
+  "extreme_rate": 0.0,
+  "split": "development"
+}

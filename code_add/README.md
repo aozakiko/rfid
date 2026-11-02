@@ -87,3 +87,7 @@ python course_project/build_iot_course_report_v2.py
 启动 Web 服务后，打开 [统计基准页](http://127.0.0.1:8765/#statistics) 可直接筛选并预览这些结果，页面同时提供统计实验验收的验收清单。
 
 完整交付和协作边界见[统计实验交付验收](../docs/统计实验交付验收.md)，软件实验口径见[统计实验规格v1](../docs/统计实验规格v1.md)。整套正式实验用 `python -m benchmark.suite --output-dir Experiments/stat_protocols` 复现，默认不调用外部API；真实LLM候选生成/导入后可随套件重跑。
+
+实验产物的 `manifest.json` 包含稳定的 `reproducibility_key` 和产物 SHA-256。完成实验后可运行 `python -m benchmark.audit Experiments/stat_protocols`，在不重跑实验的情况下检查结果文件是否被修改。
+
+严枭负责的共享验证、资源限制、配置化实验、原始数据重建、候选谱系和 Web 接口已接入。具体口径、虚拟环境命令和验证记录见[工程集成与复现实验说明](../docs/yanxiao/严枭工程集成与复现实验说明.md)。新实验使用独立输出目录，避免改写已有结果；`python -m benchmark.reproduce` 可核对两次运行的一致性，`python -m benchmark.evidence` 可从冻结原始数据重新生成 CSV/JSON/PNG/PDF。

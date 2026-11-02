@@ -14,6 +14,9 @@ from uuid import uuid4
 
 from course_project.http_support import APIError
 from stat_protocols.genotype import BASELINE_PROMPT, compile_candidate
+from benchmark.provenance import audit_manifest
+from benchmark.evidence import read_reports, comparison_rows
+from benchmark.runner import summarize_reports
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENT_ROOT = ROOT / "Experiments" / "stat_protocols"
@@ -49,9 +52,11 @@ def read_json(path):
 def dashboard():
     path = current_root() / "dashboard.json"
     if not path.exists():
-        return {"available": False, "modes": {}, "coverage": [], "message": "尚未生成统计实验，请运行 python -m benchmark.suite"}
+        return {"available": False, "modes": {}, "coverage": [], "provenance": {"audit": {"passed": False, "error": "dashboard.json not found"}}, "message": "尚未生成统计实验，请运行 python -m benchmark.suite"}
     data = dict(read_json(path))
-    manifest = data.get("manifest", {})
+    manifest_path = path.parent / "manifest.json"
+    manifest = read_json(manifest_path) if manifest_path.exists() else data.get("manifest", {})
+    data["manifest"] = manifest
     llm_record = manifest.get("llm_record") or {}
     llm_id = llm_record.get("candidate_id", "")
     candidate_folder = EXPERIMENT_ROOT / "llm" / llm_id if re.fullmatch(r"[0-9a-f]{32}", llm_id) else None
@@ -77,6 +82,15 @@ def dashboard():
         dict(key="integration", title="扩展验证接口", status="out_of_scope", evidence="演化选择、运行时沙箱和物理隔离需要独立模块验证；统计白名单编译器和评价接口已提供"),
     ]
     root = current_root()
+    manifest_path = root / "manifest.json"
+    provenance_audit = audit_manifest(root) if manifest_path.exists() else {"passed": False, "root": str(root), "error": "manifest.json not found"}
+    data["provenance"] = {
+        "revision": manifest.get("revision") or manifest.get("start_commit") or "unknown",
+        "reproducibility_key": manifest.get("reproducibility_key"),
+        "artifact_hash_count": len(manifest.get("artifact_hashes") or {}),
+        "artifact_hash_scope": manifest.get("artifact_hash_scope", ""),
+        "audit": provenance_audit,
+    }
     data["delivery_artifacts"] = [dict(name=p.name, path=_relative(p), size=p.stat().st_size, kind=p.suffix[1:]) for p in sorted(root.glob("*")) if p.is_file() and p.name != "dashboard.json"]
     if candidate_folder:
         data["delivery_artifacts"].extend(dict(name="LLM · " + p.name, path=_relative(p), size=p.stat().st_size, kind=p.suffix[1:]) for p in sorted(candidate_folder.glob("*")) if p.is_file() and p.name in ("prompt.txt", "response.txt", "candidate.json"))
@@ -118,13 +132,48 @@ def details(query):
     return {"total": len(reports), "page": page, "page_size": 20, "rows": reports[start:start + 20]}
 
 
+def comparison(query):
+    mode = query.get("mode", ["main"])[0]
+    if mode not in MODES:
+        raise ValueError("invalid statistics mode")
+    reports = read_reports(current_root() / mode / f"{mode}_reports.json")
+    for field in ("task", "distribution", "num_tags", "scenario"):
+        wanted = query.get(field, ["all"])[0]
+        if wanted == "all":
+            continue
+        if field == "scenario":
+            values = wanted.split("|")
+            if len(values) != 3:
+                raise ValueError("invalid perturbation scenario")
+            expected = tuple(float(v) for v in values)
+            reports = [r for r in reports if tuple(r.run_result.metadata.get(k, 0) for k in ("missing_rate", "noise_rate", "extreme_rate")) == expected]
+        else:
+            reports = [r for r in reports if str(r.task if field == "task" else r.run_result.metadata.get(field)) == wanted]
+    axis = query.get("axis", ["mean_communication_bits"])[0]
+    cases = comparison_rows(reports, axis)
+    keys = {(row.get("task"), row.get("distribution"), row.get("num_tags"), row.get("missing_rate"), row.get("noise_rate"), row.get("extreme_rate"), row.get("split")) for row in cases}
+    single = len(keys) == 1
+    if single:
+        rows = cases
+    else:
+        rows = summarize_reports(reports)
+        for row in rows:
+            row.update(is_pareto=False, pareto_eligible=False, pareto_exclusion_reasons=["multiple_scenarios"],
+                       failure_reasons=sorted({r.failure_reason for r in reports if r.protocol == row["protocol"] and r.failure_reason}))
+    for row in rows:
+        row.update(successRate=row["success_rate"], failures=row["failed_runs"],
+                   ci=[row["error_ci95_low"], row["error_ci95_high"]] if single else None,
+                   p95=row["p95_error"] if single else None, worst=row["worst_error"] if single else None)
+    return {"rows": rows, "single_scenario": single, "case_count": len(keys), "raw_count": len(reports), "axis": axis}
+
+
 def save_candidate(record):
     if not isinstance(record, dict):
         raise ValueError("candidate record must be a JSON object")
     # Compiling validates only a tiny declarative operator space; no import/exec.
     compile_candidate(record)
     candidate_id = uuid4().hex
-    clean = {k: record.get(k) for k in ("model", "prompt_hash", "response_hash", "genotype", "usage")}
+    clean = {k: record.get(k) for k in ("model", "prompt_hash", "response_hash", "genotype", "usage", "validation_result", "status")}
     clean.update(candidate_id=candidate_id, provenance="user_imported_not_independently_verified")
     path = EXPERIMENT_ROOT / "llm" / candidate_id / "candidate.json"
     path.parent.mkdir(parents=True)

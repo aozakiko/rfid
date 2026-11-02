@@ -84,6 +84,15 @@ def run_benchmark(spec: TaskSpec, *, seeds: Iterable[int] | None = None, sizes: 
                 tags = generate_tags(case)
                 channel = HistogramChannel(tags, case)
                 dataset_hash = hashlib.sha256(json.dumps([(t.id, t.price) for t in tags], separators=(",", ":")).encode()).hexdigest()
+                case_metadata = {
+                    "distribution": case.distribution, "num_tags": case.num_tags,
+                    "price_min": case.price_min, "price_max": case.price_max, "top_k": case.top_k,
+                    "missing_rate": case.missing_rate, "noise_rate": case.noise_rate,
+                    "extreme_rate": case.extreme_rate, "split": case.split,
+                    "dataset_hash": dataset_hash, "observed_num_tags": len(tags),
+                    "enabled_tasks": list(case.tasks),
+                    "task_spec_sha256": hashlib.sha256(json.dumps(case.to_dict(), sort_keys=True).encode()).hexdigest(),
+                }
                 for protocol_name in selected:
                     if protocol_name not in registry:
                         raise ValueError(f"unknown protocol: {protocol_name}")
@@ -101,23 +110,12 @@ def run_benchmark(spec: TaskSpec, *, seeds: Iterable[int] | None = None, sizes: 
                             # same distribution, seed and scale.
                             result = replace(
                                 result,
-                                metadata={
-                                    **dict(result.metadata),
-                                    "distribution": case.distribution,
-                                    "num_tags": case.num_tags,
-                                    "price_min": case.price_min,
-                                    "price_max": case.price_max,
-                                    "missing_rate": case.missing_rate,
-                                    "noise_rate": case.noise_rate,
-                                    "extreme_rate": case.extreme_rate,
-                                    "split": case.split,
-                                    "dataset_hash": dataset_hash,
-                                    "observed_num_tags": len(tags),
-                                    "enabled_tasks": list(case.tasks),
-                                },
+                                metadata={**dict(result.metadata), **case_metadata,
+                                    "candidate_id": (llm_candidate or {}).get("candidate_id") if protocol_name == "llm_random" else protocol_name},
                             )
                         except Exception as exc:  # retain failures as first-class benchmark rows.
-                            result = RunResult(protocol_name, task, None, None, 0, 0, 0, 0, 0, case.seed, failure_reason=f"{type(exc).__name__}: {exc}")
+                            result = RunResult(protocol_name, task, None, None, 0, 0, 0, 0, 0, case.seed,
+                                failure_reason=f"{type(exc).__name__}: {exc}", metadata={**case_metadata, "cost_status": "missing"})
                         reports.append(evaluate_run(result, cost_model))
     return reports
 

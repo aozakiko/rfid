@@ -32,8 +32,12 @@ class ProtocolValidator:
             # 我们只需要第四个返回参数
             *_, verification_data = self.protocol.execute(tags, price_min, price_max)
             verification_data = normalize_protocol_metrics(verification_data)
+            # Keep the normalized metrics available to callers that need a
+            # structured audit record in addition to the legacy text report.
+            self.verification_data = dict(verification_data)
             self.validation_notes = verification_data.get("validation_notes", [])
         except Exception as e:
+            self.verification_data = {}
             report = f"协议 {self.protocol_name} 执行出错: {e}"
             return False, report
 

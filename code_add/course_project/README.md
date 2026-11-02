@@ -27,11 +27,11 @@ Web 页面、样式和交互分别位于 `static/index.html`、`static/app.css`�
 - `validation.py`：数字范围与布尔类型校验。非法值返回 400，不再悄悄截断或替换成默认值。
 - `jobs.py`：后台任务管理。最多 2 个任务并行，运行与排队合计最多 12 个；队列满返回 503，已接受任务返回 202。保留最近 80 条任务快照，活动任务不会被清理，完成后的耗时固定。
 - `assets.py`：文件导入、类型/路径校验和有界预览；`static/asset_ui.js` 与 `static/assets.css` 提供统一资产视图、上传及分页组件。
-- `database.py`：SQLite 持久化 AI 任务与审计记录。后台队列本身保存在进程内，服务重启后原队列不可继续轮询。
+- `database.py`：SQLite 持久化 AI 任务、验证报告与审计记录。后台队列本身保存在进程内，服务重启后原队列不可继续轮询。
 
 编辑器读取文件时取得 SHA-256 版本号，保存时带回 `revision`；文件发生变化则返回 409，要求重新读取，写入采用临时文件原子替换。各场景 `outputs/` 均支持预览；HTML/SVG 预览受浏览器 sandbox 策略约束。
 
-这仍是单机实验工作台：协议 Python 代码的执行未引入容器/进程级隔离。若后续接入多人使用或部署到公网，需要补充身份认证、执行隔离和持久化任务队列。
+这仍是单机实验工作台。候选协议在独立子进程运行；严格模式增加 AST、导入/调用白名单、标签访问代理、运行时审计以及超时、内存和输出限制。该实现属于受控的软件验证环境，尚未使用容器或完整的操作系统沙箱。
 
 ## 文件导入与资产预览
 
@@ -92,7 +92,9 @@ API Key 仅随请求提交，后台任务公开快照会剔除密钥，密钥不
 - `POST /api/selfopt/prompts`：生成交叉 Prompt。
 - `POST /api/selfopt/ai-models`：探测模型或列出模型。
 - `POST /api/selfopt/ai-run-async`：异步预览或真实调用大模型生成协议。
-- `POST /api/selfopt/validate`：单协议物理约束验证、任务烟测与信息隔离静态扫描。
+- `POST /api/selfopt/validate`：单协议物理约束验证、任务烟测与信息隔离检查；通过 `security_mode=strict` 启用 AST 和运行时隔离。
+- `GET /api/selfopt/validation-reports?scene=...&protocol=...&limit=...`：查询验证历史摘要（源码 SHA-256、模式、阶段判定和最终结果）。
+- `GET /api/selfopt/validation-report?id=...`：读取一条完整验证报告及原始阶段结果。
 - `POST /api/selfopt/auto-iterate-async`：异步自动迭代生成候选协议。
 - `POST /api/selfopt/experiments`：运行 Experiments 实验与绘图任务。
 - `POST /api/selfopt/upload?destination=...&name=...`：原始文件体上传，使用 `application/octet-stream`；场景资产额外传 `scene` 和可选 `generation`。
@@ -108,6 +110,12 @@ API Key 仅随请求提交，后台任务公开快照会剔除密钥，密钥不
 - `Validator.py`：协议物理约束验证。
 - `Experiments/`：鲁棒性、敏感度与进化图实验。
 - `base_protocol/`：基线协议库。
+
+### 验证安全模式
+
+验证沙箱提供两种模式。`legacy` 兼容历史协议：保留原有仿真执行方式，并将直接标签属性访问作为告警记录；`strict` 使用 AST/危险调用检查、受限子进程和运行时标签代理，阻止读写器逻辑直接读取 `price`、`value` 或 `__dict__`。严格模式下，信息隔离或运行安全失败会使候选验证失败，不能进入正式候选结果。该机制是软件层验证，不等于硬件隐私证明或完整操作系统沙箱。
+
+每次验证都会持久化静态 AST、白名单、运行时隔离、物理约束和任务语义五个阶段；历史协议可在兼容模式运行并显示告警，但不会被标记为严格隔离通过。报告保存逐轮摘要、源码哈希和阶段证据，页面优先展示最多五个样本，不保存 API Key。
 - `multi_mode/`、`single_mode/`、`ManyTags/`：场景与世代协议资产。
 
 ## 验证
@@ -118,3 +126,5 @@ python -m unittest course_project.test_course_project course_project.test_infras
 ```
 
 已覆盖：状态读取、页面加载、文件读取、Prompt 生成、AI 任务预览、单协议验证、自动迭代预览、Experiments 鲁棒性任务和进化图任务。当前 Web 主流程聚焦“生成 -> 验证 -> 迭代 -> 产物预览”的自优化闭环。
+
+新增工程接口：`GET /api/selfopt/candidates` 查询已记录的候选父代关系；`GET /api/statistics/comparison` 返回后端计算的前沿与排除原因；`POST /api/statistics/run-config` 提交配置化实验；`GET /api/statistics/config-runs` 查询结果和历史；`POST /api/statistics/rebuild` 从原始结果重建报告。运行进度继续使用 `/api/selfopt/job`。详细字段和复现命令见[严枭工程集成说明](../../docs/yanxiao/严枭工程集成与复现实验说明.md)。

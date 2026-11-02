@@ -541,7 +541,7 @@
         <section id="view-validate" class="view">
           <div class="guide">
             <b>本页说明：</b
-            >验证沙箱聚焦单协议验证。它会按任务画像计算目标值，并检查物理约束、功能命中率、信息隔离静态扫描，避免干扰自优化主流程。
+            >验证沙箱聚焦单协议验证。它会按任务画像计算目标值，并检查物理约束、功能命中率和信息隔离；严格模式还会在子进程中阻止直接读取标签敏感属性。
             <div class="help-list">
               <div>
                 <b>验证协议：</b
@@ -574,6 +574,13 @@
                   ><select id="validateProtocol"></select>
                 </div>
                 <div>
+                  <label>安全验证模式</label
+                  ><select id="validateSecurityMode">
+                    <option value="strict" selected>严格模式 · AST + 运行时隔离</option>
+                    <option value="legacy">兼容模式 · 历史协议告警</option>
+                  </select>
+                </div>
+                <div>
                   <label>标签数量</label
                   ><input id="validateNumTags" type="number" value="120" />
                 </div>
@@ -581,6 +588,7 @@
                   <label>重复次数</label
                   ><input id="validateRuns" type="number" value="3" />
                 </div>
+                <div><label>起始 seed</label><input id="validateSeed" type="number" min="0" value="0" /></div>
                 <div>
                   <label>价格/数值下限</label
                   ><input id="validatePriceMin" type="number" value="1" />
@@ -618,6 +626,19 @@
               <div id="validateOutput">等待验证</div>
             </section>
           </div>
+          <section class="panel pad" style="margin-top: 16px">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0">
+              <h2>验证历史</h2>
+              <button class="btn secondary" id="refreshValidationHistory" type="button">刷新记录</button>
+            </div>
+            <div class="mini-note">记录包含源码 SHA-256、验证模式和各阶段判定；不会保存标签明细或 API 密钥。</div>
+            <div id="validationHistory" class="validation-history">等待验证记录</div>
+          </section>
+          <section class="panel pad" style="margin-top: 16px">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>候选记录与父代谱系</h2><button class="btn secondary" id="refreshCandidateLineage" type="button">刷新候选</button></div>
+            <p class="mini-note">展示已有记录中的父代、验证证据和源码一致性。缺少记录的历史协议不推断父代关系。</p>
+            <div id="candidateLineage">等待候选记录</div>
+          </section>
         </section>
 
         <section id="view-iterate" class="view">
@@ -967,7 +988,7 @@
         <section id="view-statistics" class="view">
           <div class="guide statistics-guide">
             <b>统计实验可视化：</b>这里直接呈现共享统计草图、四类基线、通信成本、误差、主实验、消融实验和 Pareto 结果。
-            ?????????????? seed???????????????? LLM ????????????
+            每项结果均可查看逐 seed 原始证据。论文作为理论来源与技术借鉴，当前结果属于本项目的软件仿真，尚未复现论文 PFG/DPFG 算法。
           </div>
           <div class="grid-4" id="statisticsMetrics"></div>
           <section class="panel pad statistics-controls">
@@ -990,6 +1011,12 @@
               <div><label>横轴通信指标</label><select id="statisticsCostAxis"><option value="mean_communication_bits">实际发射 bits</option><option value="mean_slots">全部预留 slots</option><option value="mean_rounds">交互轮数</option></select></div>
             </div>
             <div class="mini-note" id="statisticsFilterNote">载入 benchmark 后可按任务、分布和规模筛选。</div>
+          </section>
+          <section class="panel pad" id="statisticsProvenancePanel">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>产物完整性与复现身份</h2><span class="pill" id="statisticsAuditStatus">待审计</span></div>
+            <div id="statisticsProvenance" class="tag-list"><span class="mini-note">载入 benchmark 后显示 manifest、源码 revision、SHA-256 和审计结果。</span></div>
+            <details class="validation-details"><summary>TaskSpec、源码、复现命令与审计证据</summary><pre id="statisticsManifestDetails" class="console">等待实验记录</pre></details>
+            <div id="statisticsDeliveryArtifacts" class="statistics-artifacts"></div>
           </section>
           <div class="statistics-layout">
             <section class="panel pad">
@@ -1030,6 +1057,36 @@
             </div>
             <div id="statisticsCandidate" class="mini-note">当前重跑不包含真实模型候选；生成或导入后将自动携带候选重跑。</div>
             <pre id="statisticsJobLog" class="console" aria-live="polite">等待统计任务</pre>
+          </section>
+          <section class="panel pad">
+            <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>配置化复现实验</h2><span class="pill">固定输入 · 原始证据</span></div>
+            <p class="mini-note">使用现有统计协议和任务接口；每次运行保留完整配置、TaskSpec、数据 hash、源码 hash 和环境版本。各场景独立计算置信区间与 Pareto；图表中的时间和通信量属于软件仿真。</p>
+            <div class="form-grid">
+              <div><label for="configSeeds">seeds（逗号分隔）</label><input id="configSeeds" value="0,1,2" /></div>
+              <div><label for="configSizes">标签规模（逗号分隔）</label><input id="configSizes" value="1000" /></div>
+              <div><label for="configDistributions">分布（逗号分隔）</label><input id="configDistributions" value="uniform,multi_peak" /></div>
+              <div><label for="configSplit">数据集划分</label><select id="configSplit"><option value="evaluation">评价集 evaluation</option><option value="development">开发集 development</option><option value="validation">验证集 validation</option><option value="blind">盲测集 blind</option></select></div>
+              <div><label for="configProfiles">任务画像（逗号分隔）</label><input id="configProfiles" value="mean_estimation,variance_estimation,cardinality_estimation,top_k" /></div>
+              <div><label for="configProtocols">协议（逗号分隔）</label><input id="configProtocols" value="polling,single_serial,shared_sketch,adaptive" /></div>
+              <div><label for="configMin">数值下限</label><input id="configMin" type="number" value="1" /></div>
+              <div><label for="configMax">数值上限</label><input id="configMax" type="number" value="64" /></div>
+              <div><label for="configMissing">缺失率 [0,1]</label><input id="configMissing" type="number" min="0" max="1" step="0.01" value="0" /></div>
+              <div><label for="configNoise">噪声率 [0,1]</label><input id="configNoise" type="number" min="0" max="1" step="0.01" value="0" /></div>
+              <div><label for="configExtreme">异常值率 [0,1]</label><input id="configExtreme" type="number" min="0" max="1" step="0.01" value="0" /></div>
+            </div>
+            <p class="mini-note">分布可选 single_peak / multi_peak / gaussian / long_tail / power_law / uniform。验证集和盲测集对已归档且审计通过的参考数据检查实际 hash 重叠；参考集缺失时不能判定通过。未记录的数据使用历史仍需实验负责人确认。</p>
+            <div class="actions"><button class="btn teal" id="runConfigExperiment" type="button">运行配置化实验</button><button class="btn secondary" id="rebuildConfigEvidence" type="button" disabled>从原始结果重建报告</button><button class="btn secondary" id="reloadConfigRun" type="button">读取最新记录</button></div>
+            <div class="actions"><label for="configRunSelect">已保存实验</label><select id="configRunSelect"><option value="">暂无记录</option></select></div>
+            <pre id="configJobLog" class="console" aria-live="polite">等待配置化实验</pre>
+            <div id="configRunEvidence"></div>
+            <div id="configAssetPreview" class="statistics-asset-preview"></div>
+            <hr />
+            <h3>自动化验证与鲁棒性流水线</h3>
+            <p class="mini-note">使用上方配置作为开发场景，冻结协议参数，依次运行开发、验证、缺失、噪声、异常值、盲测，再双次复现盲测。种子组必须互不重叠；逐阶段保存原始结果、图表与源码快照。</p>
+            <div class="form-grid"><div><label for="pipelineValidationSeeds">验证 seeds（逗号分隔，留空自动分配）</label><input id="pipelineValidationSeeds" placeholder="如 1000,1001,1002" /></div><div><label for="pipelineBlindSeeds">盲测 seeds（逗号分隔，留空自动分配）</label><input id="pipelineBlindSeeds" placeholder="如 2000,2001,2002" /></div></div>
+            <div class="actions"><button class="btn teal" id="runEngineeringPipeline" type="button">运行六阶段流水线</button><button class="btn secondary" id="reloadEngineeringPipeline" type="button">读取最近流水线</button><select id="pipelineRunSelect" aria-label="已保存流水线"><option value="">暂无流水线</option></select></div>
+            <pre id="pipelineJobLog" class="console" aria-live="polite">等待流水线</pre>
+            <div id="pipelineEvidence"></div>
           </section>
         </section>
 

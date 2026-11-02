@@ -20,6 +20,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from stat_protocols.contracts import TaskSpec
 from .runner import run_benchmark, summarize_cases, write_results
+from .provenance import artifact_hashes, reproducibility_key, source_hashes
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -394,13 +395,15 @@ def _make_spec(config: RunConfig, canonical_tasks: list[str], seed: int) -> Task
     )
 
 
-def run_config(path: str | os.PathLike[str], output_override: str | os.PathLike[str] | None = None, command: Any = None) -> dict[str, Any]:
+def run_config(path: str | os.PathLike[str], output_override: str | os.PathLike[str] | None = None, command: Any = None, *, reference_paths=()) -> dict[str, Any]:
     """Run one config and write results, summary, support and manifest files."""
     config_path = Path(path)
     config = load_config(config_path)
     output_dir = Path(output_override).expanduser() if output_override is not None else Path(config.output_dir).expanduser()
     if not output_dir.is_absolute():
         output_dir = ROOT / output_dir
+    if (output_dir / "manifest.json").exists() or (output_dir / "results.json").exists():
+        raise ValueError("output already contains an experiment; select a new output directory")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     run_id = uuid.uuid4().hex
@@ -422,6 +425,8 @@ def run_config(path: str | os.PathLike[str], output_override: str | os.PathLike[
         "distributions": list(config.distributions),
         "sizes": list(config.sizes),
         "seeds": list(config.seeds),
+        "config": config.to_dict(),
+        "source_hashes": source_hashes(ROOT),
         "started_at": started_at,
         "finished_at": None,
         "status": "running",
@@ -440,6 +445,8 @@ def run_config(path: str | os.PathLike[str], output_override: str | os.PathLike[
         reports = []
         if canonical_tasks:
             spec = _make_spec(config, canonical_tasks, config.seeds[0])
+            manifest["task_specs"] = [{"spec": spec.to_dict(), "seeds": config.seeds,
+                "sizes": config.sizes, "distributions": config.distributions, "protocols": config.protocols}]
             reports = run_benchmark(
                 spec,
                 seeds=config.seeds,
@@ -448,12 +455,28 @@ def run_config(path: str | os.PathLike[str], output_override: str | os.PathLike[
                 protocol_names=config.protocols,
             )
         write_results(reports, results_path, summary_path)
+        manifest["run_count"] = len(reports)
         case_rows = summarize_cases(reports)
         _write_csv(
             summary_path,
             case_rows,
             ("distribution", "num_tags", "missing_rate", "noise_rate", "extreme_rate", "split", "protocol", "task"),
         )
+        from .splits import audit_splits, read_references
+        references, reference_hashes = read_references(reference_paths)
+        manifest["reference_artifact_hashes"] = reference_hashes
+        if references:
+            # Freeze the identities used by the overlap check, independent of
+            # whether the original reference folder is later moved.
+            unique = {json.dumps(row, sort_keys=True): row for row in references}
+            (output_dir / "reference_datasets.json").write_text(
+                json.dumps(list(unique.values()), ensure_ascii=False, indent=2), encoding="utf-8")
+            manifest["output_files"].append("reference_datasets.json")
+        manifest["split_audit"] = audit_splits(reports, references)
+        if not manifest["split_audit"]["passed"]:
+            raise ValueError("held-out split audit failed or references unavailable; inspect manifest.split_audit")
+        if source_hashes(ROOT) != manifest["source_hashes"]:
+            raise RuntimeError("source files changed during the experiment; rerun with frozen sources")
         manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
         manifest["status"] = "success"
     except Exception as exc:
@@ -462,6 +485,10 @@ def run_config(path: str | os.PathLike[str], output_override: str | os.PathLike[
         manifest["error"] = f"{type(exc).__name__}: {exc}"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         raise
+    manifest["artifact_hashes"] = artifact_hashes(output_dir)
+    # output path and run identifiers are operational, not experiment identity.
+    manifest["config"] = {k: v for k, v in config.to_dict().items() if k != "output_dir"}
+    manifest["reproducibility_key"] = reproducibility_key(manifest)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
@@ -470,9 +497,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run a JSON-configured RFID benchmark")
     parser.add_argument("--config", required=True, help="path to a benchmark JSON config")
     parser.add_argument("--output-dir", default=None, help="override the config output directory")
+    parser.add_argument("--reference", action="append", default=[], help="recorded reference results for validation/blind overlap checks")
     args = parser.parse_args(argv)
     try:
-        run_config(args.config, output_override=args.output_dir, command=["python", "-m", "benchmark.run_config", "--config", _display_path(args.config)] + (["--output-dir", args.output_dir] if args.output_dir else []))
+        run_config(args.config, output_override=args.output_dir, reference_paths=args.reference,
+            command=["python", "-m", "benchmark.run_config", "--config", _display_path(args.config)] + (["--output-dir", args.output_dir] if args.output_dir else []) + [v for p in args.reference for v in ("--reference", p)])
     except Exception as exc:
         print(f"benchmark config failed: {exc}", file=sys.stderr)
         return 1

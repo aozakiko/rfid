@@ -202,6 +202,23 @@ def init_database(db_path: Path | str = DB_PATH) -> Path:
                 result_json TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS validation_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                scene TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                protocol_path TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL,
+                task_profile TEXT NOT NULL,
+                security_mode TEXT NOT NULL,
+                final_decision TEXT NOT NULL,
+                validator_passed INTEGER NOT NULL,
+                pass_rate REAL NOT NULL DEFAULT 0,
+                runtime_isolation_enforced INTEGER NOT NULL DEFAULT 0,
+                strict_information_isolation_passed INTEGER,
+                report_json TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS design_cases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL,
@@ -243,12 +260,14 @@ def init_database(db_path: Path | str = DB_PATH) -> Path:
             CREATE INDEX IF NOT EXISTS idx_alerts_run_id ON alerts(run_id);
             CREATE INDEX IF NOT EXISTS idx_benchmark_run_id ON benchmark_results(run_id);
             CREATE INDEX IF NOT EXISTS idx_ai_jobs_created_at ON ai_jobs(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_validation_reports_created_at ON validation_reports(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_validation_reports_protocol ON validation_reports(scene, protocol, id DESC);
             CREATE INDEX IF NOT EXISTS idx_design_cases_created_at ON design_cases(created_at DESC);
             """
         )
         conn.execute(
             "INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)",
-            ("schema_version", "2"),
+            ("schema_version", "3"),
         )
     return path
 
@@ -586,6 +605,111 @@ def store_ai_job(
         return job_id
 
 
+def store_validation_report(
+    report: dict[str, Any],
+    *,
+    db_path: Path | str = DB_PATH,
+) -> int:
+    """Persist one Web validation result without storing secrets or tag data."""
+    init_database(db_path)
+    security_mode = str(report.get("security_mode") or "legacy")
+    strict_isolation = report.get("strict_information_isolation_passed")
+    try:
+        report_json = _json(report)
+    except (TypeError, ValueError):
+        report_json = json.dumps(report, ensure_ascii=False, default=str)
+    with open_database(db_path) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO validation_reports(
+                created_at, scene, protocol, protocol_path, source_sha256, task_profile,
+                security_mode, final_decision, validator_passed, pass_rate,
+                runtime_isolation_enforced, strict_information_isolation_passed, report_json
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                utc_now_text(),
+                str(report.get("scene") or ""),
+                str(report.get("protocol") or ""),
+                str(report.get("protocol_path") or ""),
+                str(report.get("source_sha256") or ""),
+                str(report.get("task_profile") or ""),
+                security_mode,
+                str(report.get("final_decision") or "not_run"),
+                int(bool(report.get("validator_passed"))),
+                float(report.get("pass_rate") or 0.0),
+                int(bool(report.get("runtime_isolation_enforced"))),
+                None if strict_isolation is None else int(bool(strict_isolation)),
+                report_json,
+            ),
+        )
+        report_id = int(cursor.lastrowid)
+        _store_event(
+            conn,
+            event_type="validation_report",
+            entity_type="validation_report",
+            entity_id=report_id,
+            message=f"完成协议验证: {report.get('scene')}/{report.get('protocol')}",
+            detail={
+                "security_mode": security_mode,
+                "final_decision": report.get("final_decision", "not_run"),
+                "source_sha256": report.get("source_sha256", ""),
+            },
+        )
+    return report_id
+
+
+def _validation_report_row(row: sqlite3.Row, *, include_report: bool = False) -> dict[str, Any]:
+    data = _row_to_dict(row)
+    raw = data.pop("report_json", None)
+    if include_report:
+        try:
+            data["report"] = json.loads(raw) if raw else {}
+        except (TypeError, json.JSONDecodeError):
+            data["report"] = {}
+    return data
+
+
+def list_validation_reports(
+    limit: int = 20,
+    *,
+    scene: str | None = None,
+    protocol: str | None = None,
+    db_path: Path | str = DB_PATH,
+) -> list[dict[str, Any]]:
+    init_database(db_path)
+    clauses: list[str] = []
+    values: list[Any] = []
+    if scene:
+        clauses.append("scene = ?")
+        values.append(str(scene))
+    if protocol:
+        clauses.append("protocol = ?")
+        values.append(str(protocol))
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    values.append(max(1, min(int(limit), 200)))
+    with open_database(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, created_at, scene, protocol, protocol_path, source_sha256,
+                   task_profile, security_mode, final_decision, validator_passed,
+                   pass_rate, runtime_isolation_enforced, strict_information_isolation_passed,
+                   report_json
+            FROM validation_reports
+            """ + where + " ORDER BY id DESC LIMIT ?",
+            values,
+        ).fetchall()
+    return [_validation_report_row(row) for row in rows]
+
+
+def get_validation_report(report_id: int, *, db_path: Path | str = DB_PATH) -> dict[str, Any] | None:
+    init_database(db_path)
+    with open_database(db_path) as conn:
+        row = conn.execute("SELECT * FROM validation_reports WHERE id = ?", (int(report_id),)).fetchone()
+    return _validation_report_row(row, include_report=True) if row else None
+
+
 def store_design_case(
     case: dict[str, Any],
     *,
@@ -781,6 +905,7 @@ def database_stats(*, db_path: Path | str = DB_PATH) -> dict[str, Any]:
             "security_checks",
             "benchmark_results",
             "ai_jobs",
+            "validation_reports",
             "design_cases",
             "deployment_manifests",
             "system_events",
@@ -814,10 +939,20 @@ def database_stats(*, db_path: Path | str = DB_PATH) -> dict[str, Any]:
             LIMIT 8
             """
         ).fetchall()
+        validation_reports = conn.execute(
+            """
+            SELECT id, created_at, scene, protocol, task_profile, security_mode,
+                   final_decision, validator_passed, pass_rate, source_sha256
+            FROM validation_reports
+            ORDER BY id DESC
+            LIMIT 8
+            """
+        ).fetchall()
     return {
         "db_path": str(Path(db_path).resolve()),
         "counts": counts,
         "recent_events": [_row_to_dict(row) for row in recent_events],
         "ai_jobs": [_ai_job_row(row) for row in ai_jobs],
+        "validation_reports": [_row_to_dict(row) for row in validation_reports],
         "design_cases": [_row_to_dict(row) for row in design_cases],
     }

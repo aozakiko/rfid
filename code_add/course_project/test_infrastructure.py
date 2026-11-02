@@ -211,11 +211,11 @@ class ParameterValidationTests(unittest.TestCase):
 
 class ProtocolAccountingTests(unittest.TestCase):
     def test_failure_after_sample_limit_keeps_actual_completed_count(self):
-        protocol = Mock()
-        protocol.execute.side_effect = [([299, 699], 19, 10.0, {})] * 7 + [RuntimeError("interrupted")]
-        with patch.object(web_app, "_load_protocol_instance", return_value=protocol), \
-             patch.object(web_app.ProtocolValidator, "validate", return_value=(True, "passed")), \
-             patch.object(web_app, "_profile_hit", return_value=True):
+        from stat_protocols.contracts import RunResult
+        ok = RunResult("ModeQuerySEM", "legacy_mode_query", [299, 699], [299, 699], 1, 1, 1, 1, 1, 0,
+            cpu_time_ms=10., metadata={"verification_data": {"bits_per_slot": 1, "frame_size": 1}})
+        failed = RunResult("ModeQuerySEM", "legacy_mode_query", None, None, 0, 0, 0, 0, 0, 0, failure_reason="interrupted")
+        with patch("generic_protocol.validation.run_protocol_file", side_effect=[{"legacy_mode_query": ok}] * 7 + [{"legacy_mode_query": failed}]):
             result = web_app.validate_selfopt_protocol({"scene": "test", "protocol": "ModeQuerySEM", "num_tags": 60, "total_runs": 10})
         self.assertEqual(result["completed_runs"], 7)
         self.assertEqual(len(result["samples"]), 5)

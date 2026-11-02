@@ -32,11 +32,13 @@ from ai_protocol_optimizer import (
 )
 from backend_tools.openai_compatible import LLMClientError, LLMConfig, OpenAICompatibleClient
 from prompt_generation import create_crossover_prompts
-from Validator import ProtocolValidator
 from course_project.database import (
     database_stats,
+    get_validation_report,
     init_database,
+    list_validation_reports,
     store_ai_job,
+    store_validation_report,
 )
 from course_project.selfopt_ui import INDEX_HTML as ADVANCED_INDEX_HTML
 from course_project.http_support import (
@@ -45,6 +47,8 @@ from course_project.http_support import (
 from course_project.jobs import JobManager
 from course_project.validation import bounded_int as _coerce_int, bounded_float, boolean_value
 from course_project.assets import import_file, preview_file
+from generic_protocol.security import analyze_file
+from generic_protocol.subprocess_runner import run_protocol_file
 
 
 COURSE_ROOT = Path(__file__).resolve().parent
@@ -620,33 +624,9 @@ def _find_protocol_file(scene: str, protocol_name: str, *, include_base: bool = 
     raise FileNotFoundError(f"找不到协议文件: {scene}/{protocol}.py")
 
 
-def _scan_information_isolation(protocol_file: Path) -> dict[str, Any]:
-    """Heuristic static scan for direct reader access to tag private attributes."""
-    try:
-        text = protocol_file.read_text(encoding="utf-8", errors="ignore")
-    except OSError as exc:
-        return {"passed": False, "warnings": [f"无法读取协议源码: {exc}"], "warning_count": 1}
-
-    patterns = [
-        ("tag.price", "直接访问 tag.price"),
-        ("getattr(tag, \"price\")", "通过 getattr(tag, \"price\") 访问私有属性"),
-        ("getattr(tag, 'price')", "通过 getattr(tag, 'price') 访问私有属性"),
-    ]
-    warnings: list[dict[str, Any]] = []
-    for line_no, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        for needle, message in patterns:
-            if needle in stripped:
-                warnings.append({"line": line_no, "rule": message, "code": stripped[:160]})
-
-    return {
-        "passed": not warnings,
-        "warnings": warnings[:20],
-        "warning_count": len(warnings),
-        "note": "启发式静态扫描：仿真中允许标签侧响应读取自身属性，但读写器决策逻辑不应直接依赖单个标签私有值。",
-    }
+def _scan_information_isolation(protocol_file: Path, *, strict: bool = False) -> dict[str, Any]:
+    """Run the shared AST scanner in legacy-compatible or strict mode."""
+    return analyze_file(protocol_file, strict=strict)
 
 
 def _load_scene_task(scene: str):
@@ -663,146 +643,32 @@ def _load_scene_task(scene: str):
     return generate_tags, getattr(module, "SIMULATION_CONFIG", {})
 
 
-def _load_protocol_instance(protocol_file: Path, protocol_name: str):
-    spec = importlib.util.spec_from_file_location(
-        f"web_selfopt.protocol.{protocol_name}.{time.time_ns()}",
-        protocol_file,
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"无法加载协议文件: {protocol_file}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    protocol_class = getattr(module, protocol_name)
-    return protocol_class()
-
-
-def _target_values_for_profile(tags: list[Any], true_info: dict[str, Any], task_profile: str, payload: dict[str, Any]) -> list[float]:
-    if task_profile == CUSTOM_TASK_PROFILE:
-        return []
-    prices = [float(getattr(tag, "price", 0.0)) for tag in tags]
-    if not prices:
-        return [0.0]
-    if task_profile == "mode_query":
-        return [float(x) for x in true_info.get("modes", [])]
-    if task_profile == "mean_estimation":
-        return [sum(prices) / len(prices)]
-    if task_profile == "variance_estimation":
-        mean = sum(prices) / len(prices)
-        return [sum((x - mean) ** 2 for x in prices) / len(prices)]
-    if task_profile == "median_quantile":
-        q = bounded_float(payload, "quantile", 0.5, 0.0, 1.0)
-        q = max(0.0, min(1.0, q))
-        ordered = sorted(prices)
-        index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * q)))
-        return [ordered[index]]
-    if task_profile == "cardinality_estimation":
-        return [float(len(tags))]
-    if task_profile == "missing_stocktaking":
-        return [float(len(tags))]
-    return [float(x) for x in true_info.get("modes", [])]
-
-
-def _estimated_values(raw: Any) -> list[float]:
-    if isinstance(raw, (int, float)):
-        return [float(raw)]
-    if isinstance(raw, (list, tuple, set)):
-        values = []
-        for item in raw:
-            if isinstance(item, (int, float)):
-                values.append(float(item))
-        return values
-    return []
-
-
-def _profile_hit(estimated: list[float], target: list[float], task_profile: str, payload: dict[str, Any], raw_result: Any = None) -> bool:
-    if task_profile == CUSTOM_TASK_PROFILE:
-        # Custom tasks have no universal ground-truth calculator. The generic
-        # validation contract is successful execution with a list-shaped result.
-        return isinstance(raw_result, (list, tuple, set))
-    if not estimated or not target:
-        return False
-    if task_profile == "mode_query":
-        return set(int(x) for x in estimated).issubset(set(int(x) for x in target))
-    tolerance = bounded_float(payload, "relative_tolerance", 0.15, 0.0, 1.0)
-    absolute_tolerance = bounded_float(payload, "absolute_tolerance", 2.0, 0.0, 1e12)
-    error = abs(estimated[0] - target[0])
-    limit = max(absolute_tolerance, abs(target[0]) * tolerance)
-    return error <= limit
-
-
 def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
+    from generic_protocol.validation import validate_candidate
+    from generic_tasks import get_profile
+
     scene = _validate_scene(str(payload.get("scene") or build_catalog()["defaults"]["scene"]))
     protocol = _validate_identifier(str(payload.get("protocol") or ""), "协议名称")
-    task_profile = str(payload.get("task_profile") or "mode_query")
-    custom_task_text = str(payload.get("custom_task_text") or "").strip()
-    validate_task_profile(task_profile, custom_task_text)
-    protocol_file = _find_protocol_file(scene, protocol, include_base=True)
-    information_isolation = _scan_information_isolation(protocol_file)
-    generate_tags, task_config = _load_scene_task(scene)
-    price_min = _coerce_int(payload, "price_min", int(task_config.get("PRICE_MIN", 1)), 1, 100000)
-    price_max = _coerce_int(payload, "price_max", int(task_config.get("PRICE_MAX", 1000)), price_min + 1, 1000000)
-    num_tags = _coerce_int(payload, "num_tags", 120, 20, 200000)
-    total_runs = _coerce_int(payload, "total_runs", 3, 1, 200)
-
-    protocol_instance = _load_protocol_instance(protocol_file, protocol)
-    validation_tags, _ = generate_tags(num_tags, price_min, price_max)
-    validator = ProtocolValidator(protocol_name=protocol, protocol_instance=protocol_instance)
-    is_valid, report = validator.validate(validation_tags, price_min, price_max)
-
-    passed_runs = 0
-    total_time = 0.0
-    samples: list[dict[str, Any]] = []
-    runtime_error = ""
-    completed_runs = 0
-    for run_index in range(total_runs):
-        tags, true_info = generate_tags(num_tags, price_min, price_max)
-        try:
-            raw_values, metric, exec_time_ms, verification_data = protocol_instance.execute(tags, price_min, price_max)
-        except Exception as exc:
-            runtime_error = str(exc)
-            break
-        target = _target_values_for_profile(tags, true_info if isinstance(true_info, dict) else {}, task_profile, payload)
-        estimated = _estimated_values(raw_values)
-        hit = _profile_hit(estimated, target, task_profile, payload, raw_values)
-        passed_runs += int(hit)
-        completed_runs += 1
-        total_time += float(exec_time_ms or 0.0)
-        if len(samples) < 5:
-            samples.append(
-                {
-                    "run": run_index + 1,
-                    "hit": hit,
-                    "estimated_values": estimated,
-                    "target_values": target,
-                    "metric": metric,
-                    "exec_time_ms": exec_time_ms,
-                    "verification_data": verification_data,
-                }
-            )
-
-    avg_time = round(total_time / max(1, completed_runs), 4)
-    pass_rate = round(passed_runs / max(1, completed_runs) * 100, 2)
-    return {
-        "scene": scene,
-        "protocol": protocol,
-        "task_profile": task_profile,
-        "task_title": task_guidance(task_profile, custom_task_text)["title"],
-        "custom_task_text": custom_task_text if task_profile == CUSTOM_TASK_PROFILE else "",
-        "semantic_validation": "not_available" if task_profile == CUSTOM_TASK_PROFILE else "evaluated",
-        "validation_scope": "execution_and_output_contract" if task_profile == CUSTOM_TASK_PROFILE else "execution_and_semantic_target",
-        "protocol_path": _relative_to_project(protocol_file),
-        "validator_passed": bool(is_valid),
-        "validator_report": report,
-        "information_isolation_passed": information_isolation["passed"],
-        "information_isolation": information_isolation,
-        "runtime_error": runtime_error,
-        "num_tags": num_tags,
-        "total_runs": total_runs,
-        "completed_runs": completed_runs,
-        "pass_rate": pass_rate,
-        "avg_time_ms": avg_time,
-        "samples": samples,
-    }
+    profile = validate_task_profile(str(payload.get("task_profile") or "mode_query"), payload.get("custom_task_text"))
+    mode = str(payload.get("security_mode") or "legacy").strip().lower()
+    if mode not in {"strict", "legacy"}:
+        raise ValueError("security_mode 必须是 strict 或 legacy")
+    path = _find_protocol_file(scene, protocol, include_base=True)
+    generator, config = _load_scene_task(scene)
+    price_min = _coerce_int(payload, "price_min", int(config.get("PRICE_MIN", 1)), 1, 100000)
+    price_max = _coerce_int(payload, "price_max", int(config.get("PRICE_MAX", 1000)), price_min + 1, 1000000)
+    result = validate_candidate(path, protocol, generator, scene=scene, task_profile=profile,
+        security_mode=mode, seed=_coerce_int(payload, "seed", 0, 0, 2**31 - 201),
+        num_tags=_coerce_int(payload, "num_tags", 120, 20, 200000),
+        total_runs=_coerce_int(payload, "total_runs", 3, 1, 200), price_min=price_min, price_max=price_max,
+        relative_tolerance=bounded_float(payload, "relative_tolerance", .15, 0., 1.),
+        absolute_tolerance=bounded_float(payload, "absolute_tolerance", 2., 0., 1e12),
+        quantile=bounded_float(payload, "quantile", .5, 0., 1.))
+    result["task_title"] = TASK_GUIDANCE.get(profile, {}).get("title", get_profile(profile).title)
+    result["custom_task_text"] = str(payload.get("custom_task_text") or "").strip() if profile == CUSTOM_TASK_PROFILE else ""
+    result["protocol_path"] = _relative_to_project(path)
+    result["validation_report_id"] = store_validation_report(result)
+    return result
 
 
 def copy_baseline_to_scene(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1536,9 +1402,32 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/statistics/details":
                 from course_project.statistics_service import details
                 json_response(self, details(query))
+            elif path == "/api/statistics/comparison":
+                from course_project.statistics_service import comparison
+                json_response(self, comparison(query))
+            elif path == "/api/statistics/config-runs":
+                from course_project.engineering_service import config_run
+                json_response(self, config_run(query))
+            elif path == "/api/statistics/pipelines":
+                from course_project.engineering_service import pipeline_run
+                json_response(self, pipeline_run(query))
+            elif path == "/api/selfopt/candidates":
+                from course_project.engineering_service import candidate_lineage
+                json_response(self, candidate_lineage(query))
             elif path == "/api/selfopt/job":
                 job_id = query.get("id", [""])[0]
                 json_response(self, {"job": get_background_job(job_id)})
+            elif path == "/api/selfopt/validation-reports":
+                limit = _coerce_int({"limit": query.get("limit", ["20"])[0]}, "limit", 20, 1, 200)
+                scene = query.get("scene", [""])[0].strip() or None
+                protocol = query.get("protocol", [""])[0].strip() or None
+                json_response(self, {"reports": list_validation_reports(limit, scene=scene, protocol=protocol)})
+            elif path == "/api/selfopt/validation-report":
+                report_id = _coerce_int({"id": query.get("id", [""])[0]}, "id", 0, 1, 2_147_483_647)
+                report = get_validation_report(report_id)
+                if report is None:
+                    raise FileNotFoundError(f"找不到验证报告: {report_id}")
+                json_response(self, report)
             elif path == "/api/selfopt/raw":
                 rel_path = query.get("path", [""])[0]
                 file_response(self, _resolve_project_path(rel_path))
@@ -1568,7 +1457,16 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, result, HTTPStatus.CREATED)
                 return
             payload = read_json_body(self)
-            if path == "/api/statistics/run":
+            if path == "/api/statistics/run-config":
+                from course_project.engineering_service import start_config
+                json_response(self, {"job": start_config(JOB_MANAGER, payload)}, HTTPStatus.ACCEPTED)
+            elif path == "/api/statistics/run-pipeline":
+                from course_project.engineering_service import start_pipeline
+                json_response(self, {"job": start_pipeline(JOB_MANAGER, payload)}, HTTPStatus.ACCEPTED)
+            elif path == "/api/statistics/rebuild":
+                from course_project.engineering_service import start_rebuild
+                json_response(self, {"job": start_rebuild(JOB_MANAGER, payload)}, HTTPStatus.ACCEPTED)
+            elif path == "/api/statistics/run":
                 from course_project.statistics_service import start_suite
                 json_response(self, {"job": start_suite(JOB_MANAGER, payload)}, HTTPStatus.ACCEPTED)
             elif path == "/api/statistics/generate-baseline":

@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from functools import partial
 from unittest.mock import patch
 
-from course_project.database import database_stats, init_database, store_ai_job
+from course_project.database import database_stats, get_validation_report, init_database, list_validation_reports, store_ai_job, store_validation_report
 from course_project.web_app import (
     read_project_file,
     run_ai_generation,
@@ -23,8 +23,9 @@ class CourseProjectSmokeTest(unittest.TestCase):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         db_path = Path(temporary.name) / "tests.sqlite3"
+        self.db_path = db_path
         init_database(db_path)
-        for name, function in (("database_stats", database_stats), ("store_ai_job", store_ai_job)):
+        for name, function in (("database_stats", database_stats), ("store_ai_job", store_ai_job), ("store_validation_report", store_validation_report)):
             patcher = patch(f"course_project.web_app.{name}", partial(function, db_path=db_path))
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -61,7 +62,37 @@ class CourseProjectSmokeTest(unittest.TestCase):
 
         self.assertTrue(result["validator_passed"])
         self.assertTrue(result["information_isolation_passed"])
-        self.assertGreaterEqual(result["pass_rate"], 90.0)
+        # Historical mode protocols may return only one of several tied modes.
+        # Keep the measured outcome instead of awarding a subset full credit.
+        self.assertEqual(result["completed_runs"], 1)
+        self.assertGreater(result["validation_report_id"], 0)
+        self.assertIn(result["final_decision"], {"warning", "failed"})
+        self.assertEqual({stage["id"] for stage in result["validation_stages"]}, {"static_ast", "whitelist", "runtime_isolation", "physical_constraints", "task_semantics"})
+
+        stats = database_stats(db_path=self.db_path)
+        self.assertEqual(stats["counts"]["validation_reports"], 1)
+
+    def test_strict_validation_reports_legacy_isolation_violation(self) -> None:
+        result = validate_selfopt_protocol(
+            {
+                "scene": "test",
+                "protocol": "ModeQuerySEM",
+                "task_profile": "mode_query",
+                "security_mode": "strict",
+                "num_tags": 30,
+                "total_runs": 1,
+            }
+        )
+
+        self.assertEqual(result["security_mode"], "strict")
+        self.assertFalse(result["validator_passed"])
+        self.assertFalse(result["information_isolation_passed"])
+        self.assertFalse(result["strict_information_isolation_passed"])
+        self.assertIn("direct_tag_attribute", {item["rule"] for item in result["information_isolation"]["violations"]})
+        history = list_validation_reports(scene="test", protocol="ModeQuerySEM", db_path=self.db_path)
+        self.assertEqual(len(history), 1)
+        detail = get_validation_report(history[0]["id"], db_path=self.db_path)
+        self.assertEqual(detail["report"]["final_decision"], "failed")
 
     def test_ai_generation_and_auto_iteration_dry_run(self) -> None:
         ai_job = run_ai_generation(

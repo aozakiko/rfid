@@ -122,6 +122,21 @@ class StatisticalProtocolContractTests(unittest.TestCase):
         self.assertTrue(all("missing_real_llm_candidate" in r.failure_reason for r in missing))
         self.assertNotIn("llm_random", {r["protocol"] for r in pareto_front(reports)})
 
+    def test_failed_llm_validation_record_cannot_enter_pareto(self):
+        spec = TaskSpec(num_tags=20)
+        candidate = {
+            "candidate_id": "fixture",
+            "model": "fixture",
+            "prompt_hash": "p",
+            "response_hash": "r",
+            "genotype": {"operator": "anonymous_histogram", "rounds": 1, "slots_per_value": 32, "threshold": None},
+            "validation_result": {"is_valid": False, "failure_reason": "strict isolation"},
+        }
+        reports = run_benchmark(spec, llm_candidate=candidate, protocol_names=("llm_random",))
+        self.assertTrue(all(r.status == "failed" for r in reports))
+        self.assertTrue(all("candidate_validation_failed" in r.failure_reason for r in reports))
+        self.assertEqual(pareto_front(reports), [])
+
     def test_pareto_compares_same_task_only(self):
         mean_run = RunResult("mean_only", "mean", 1, 1, 1, 1, 1, 1, 1, 0)
         variance_run = RunResult("variance_only", "variance", 1, 1, 100, 100, 1, 1, 1, 0)

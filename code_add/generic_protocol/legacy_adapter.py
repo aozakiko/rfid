@@ -125,21 +125,19 @@ class LegacyProtocolAdapter(ProtocolAdapter):
             for source in sources:
                 for alias in aliases:
                     if alias in source:
-                        try:
-                            candidate = int(source[alias])
-                        except (TypeError, ValueError):
-                            continue
-                        if candidate >= 0:
-                            value = max(value, candidate)
-                            break
+                        candidate = source[alias]
+                        if type(candidate) is not int or candidate < 0:
+                            raise ValueError(f"invalid communication counter: {alias}")
+                        value = max(value, candidate)
+                        break
             counters[canonical] = value
         return counters
 
     @classmethod
     def _cost_status(cls, verification: Mapping[str, Any], counters: Mapping[str, int]) -> str:
-        events = verification.get("communication_events", verification.get("events"))
-        has_events = bool(events) if isinstance(events, (list, tuple, set, Mapping)) else False
-        has_counters = any(value > 0 for value in counters.values())
+        # Historical candidates report their own costs. This records availability,
+        # not independent measurement by the statistics channel.
+        has_counters = counters["reader_bits"] + counters["tag_bits"] > 0 and counters["slots"] > 0
         return "measured" if has_counters else "missing"
 
     def _to_result(self, task: str, tags: Any, spec: Any, payload: Any) -> RunResult:
@@ -148,12 +146,15 @@ class LegacyProtocolAdapter(ProtocolAdapter):
         counters = self._counters(verification)
         cost_status = self._cost_status(verification, counters)
         metadata: dict[str, Any] = {
+            **verification,
             "metric": metric,
             "verification_data": dict(verification),
             "metric_kind": "set",
             "cost_status": cost_status,
+            "cost_origin": "candidate_self_reported",
+            "raw_estimate_type": type(estimated_values).__name__,
+            "output_was_list": isinstance(estimated_values, list),
         }
-        metadata.update(verification)
         if "communication_events" in verification:
             metadata["communication_events_present"] = bool(verification["communication_events"])
         return RunResult(

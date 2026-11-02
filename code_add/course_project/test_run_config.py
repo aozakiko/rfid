@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from benchmark.run_config import RunConfig, load_config, run_config
+from benchmark.provenance import artifact_hashes, audit_manifest, reproducibility_key
 from tools.verify import verify
 
 
@@ -113,6 +114,30 @@ class RunConfigTests(unittest.TestCase):
 
     def test_verify_runs_compile_unittest_and_smoke_path(self):
         self.assertEqual(verify(run_unittests=False), 0)
+
+    def test_provenance_audit_detects_artifact_mutation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+            artifact = output / "results.json"
+            artifact.write_text('{"ok":true}', encoding="utf-8")
+            manifest = {
+                "schema_version": "test",
+                "seeds": [0],
+                "blind_seeds": [100],
+                "sizes": [8],
+                "distributions": ["uniform"],
+                "cost_model": {},
+                "source_hashes": {"source.py": "abc"},
+                "llm_status": "none",
+            }
+            manifest["artifact_hashes"] = artifact_hashes(output)
+            manifest["reproducibility_key"] = reproducibility_key(manifest)
+            (output / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertTrue(audit_manifest(output)["passed"])
+            artifact.write_text('{"ok":false}', encoding="utf-8")
+            report = audit_manifest(output)
+            self.assertFalse(report["passed"])
+            self.assertIn("results.json", report["mismatched"])
 
 
 if __name__ == "__main__":
