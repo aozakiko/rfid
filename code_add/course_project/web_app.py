@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import fnmatch
 import importlib.util
 import json
 import mimetypes
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from uuid import uuid4
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -47,8 +49,11 @@ from course_project.http_support import (
 from course_project.jobs import JobManager
 from course_project.validation import bounded_int as _coerce_int, bounded_float, boolean_value
 from course_project.assets import import_file, preview_file
+from course_project.candidate_evaluation import evaluate_protocol, select_population, feedback_for, save_json, independent_validation
+from course_project.optimization_control import OptimizationControl, OptimizationStopped
 from generic_protocol.security import analyze_file
 from generic_protocol.subprocess_runner import run_protocol_file
+from generic_tasks import list_profiles
 
 
 COURSE_ROOT = Path(__file__).resolve().parent
@@ -56,7 +61,7 @@ IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 GENERATION_RE = re.compile(r"^generation_?(\d+)$")
 TEXT_FILE_SUFFIXES = {".py", ".txt", ".json", ".csv", ".md", ".log", ".html"}
 MAX_WEB_FILE_BYTES = 900_000
-JOB_MANAGER = JobManager()
+JOB_MANAGER = JobManager(history_path=COURSE_ROOT / "outputs" / "background_jobs.json")
 STATIC_ROOT = COURSE_ROOT / "static"
 STATIC_FILES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8"}
 STATIC_FILES.update({"asset_ui.js": "text/javascript; charset=utf-8", "assets.css": "text/css; charset=utf-8"})
@@ -323,22 +328,7 @@ def _experiment_artifact_rows(*, limit: int | None = None) -> list[dict[str, Any
 
 
 def _evolution_scenario_names() -> list[str]:
-    names: list[str] = []
-    data_path = PROJECT_ROOT / "Experiments" / "evolution_data_combined.json"
-    if data_path.exists():
-        try:
-            with data_path.open("r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            if isinstance(payload, dict):
-                names.extend(str(key) for key in payload.keys())
-        except (OSError, json.JSONDecodeError):
-            pass
-    if not names:
-        names.extend(["single_peak", "multi_peak"])
-    for scene in discover_scenes():
-        if scene not in names:
-            names.append(scene)
-    return names
+    return discover_scenes()
 
 
 def _output_artifact_rows(*, limit: int | None = None) -> list[dict[str, Any]]:
@@ -425,9 +415,10 @@ def selfopt_state() -> dict[str, Any]:
         "scenes": [_scene_summary(scene) for scene in catalog["scenes"]],
         "protocols": catalog["protocols"],
         "base_protocols": _base_protocol_rows(),
-        "task_profiles": TASK_GUIDANCE,
+        "task_profiles": {profile.profile_id: task_guidance(profile.profile_id, "用户将在生成前填写自定义任务说明")
+                          for profile in list_profiles()},
         "project_vision": {
-            "name": "面向多维统计场景的 RFID 协议自优化 Web 平台",
+            "name": "基于大模型的 RFID 射频识别通讯协议自优化研究平台",
             "source": "2025 年大学生创新创业训练计划项目申报书",
             "summary": "平台目标是把 RFID 协议设计从人工推导升级为智能生成，支持自然语言需求、GRDL 建模、扩展父代协议基因库、LLM 进化生成、在线仿真沙箱与三重正确性验证。",
             "statistics": ["mode_query", "mean_estimation", "variance_estimation", "median_quantile", "cardinality_estimation", "missing_stocktaking", CUSTOM_TASK_PROFILE],
@@ -464,6 +455,24 @@ def get_background_job(job_id: str) -> dict[str, Any]:
     return JOB_MANAGER.get(job_id)
 
 
+def retry_background_task(payload):
+    previous = JOB_MANAGER.get(str(payload.get("id") or ""))
+    if previous["status"] not in {"failed", "cancelled", "interrupted"}:
+        raise APIError("仅可重新运行失败、已停止或已中断的任务", HTTPStatus.CONFLICT)
+    if previous["kind"] not in {"ai_generation", "auto_iterate"}:
+        raise ValueError("该任务请从原实验页面重新提交配置")
+    replay = dict(previous["payload"])
+    for key in ("api_key_value", "base_url", "model"):
+        if payload.get(key):
+            replay[key] = payload[key]
+    suffix = "_retry_" + uuid4().hex[:8]
+    key = "prefix" if previous["kind"] == "auto_iterate" else "protocol_name"
+    replay[key] = str(replay.get(key) or "web_candidate") + suffix
+    replay["retry_of"] = previous["id"]
+    # Full rerun with fresh names, not silent replay of a partially written phase.
+    return start_background_task(previous["kind"], replay)
+
+
 def start_background_task(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     workflows = {"ai_generation": run_ai_generation, "auto_iterate": run_selfopt_auto_iterate}
     if kind not in workflows:
@@ -473,11 +482,12 @@ def start_background_task(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         _web_llm_config(payload)
 
     def work(update):
+        def progress_logger(message, progress=None, stage=None):
+            update(stage=stage, progress=progress, log=str(message))
+        progress_logger.check_cancelled = update.check_cancelled
         return workflows[kind](
             payload,
-            progress_logger=lambda message, progress=None, stage=None: update(
-                stage=stage, progress=progress, log=str(message),
-            ),
+            progress_logger=progress_logger,
         )
 
     return JOB_MANAGER.submit(kind, payload, work)
@@ -813,7 +823,7 @@ def _parse_batch_results(stdout: str) -> list[dict[str, Any]]:
     return rows
 
 
-def run_selfopt_batch_test(payload: dict[str, Any]) -> dict[str, Any]:
+def run_selfopt_batch_test(payload: dict[str, Any], progress_logger=None) -> dict[str, Any]:
     scene = _validate_scene(str(payload.get("scene") or build_catalog()["defaults"]["scene"]))
     protocols = _protocol_patterns(payload.get("protocols") or payload.get("patterns"))
     if not protocols:
@@ -824,42 +834,63 @@ def run_selfopt_batch_test(payload: dict[str, Any]) -> dict[str, Any]:
     price_min = _coerce_int(payload, "price_min", 1, 1, 100000)
     price_max = _coerce_int(payload, "price_max", 1000, price_min + 1, 1000000)
     timeout = _coerce_int(payload, "timeout_seconds", 180, 20, 1800)
-    command = [
-        sys.executable,
-        "Test.py",
-        "--scene",
-        scene,
-        *protocols,
-        "--num-tags",
-        str(num_tags),
-        "--total-runs",
-        str(total_runs),
-        "--price-min",
-        str(price_min),
-        "--price-max",
-        str(price_max),
-    ]
+    profile = validate_task_profile(str(payload.get("task_profile") or "mode_query"), payload.get("custom_task_text"))
+    mode = str(payload.get("security_mode") or "strict")
+    if mode not in {"strict", "legacy"}:
+        raise ValueError("security_mode 必须是 strict 或 legacy")
+    available_names = set(discover_protocols(scene)) | {p.stem for p in (PROJECT_ROOT / "base_protocol").glob("*.py") if p.stem != "__init__"}
+    names = [name for name in sorted(available_names)
+             if any(pattern == "all" or fnmatch.fnmatchcase(name, pattern) for pattern in protocols)]
+    if not names:
+        raise ValueError("没有匹配的协议")
+    generator, _ = _load_scene_task(scene)
+    config = {"scene": scene, "task_profile": profile, "security_mode": mode,
+              "seed": _coerce_int(payload, "seed", 0, 0, 2**31 - 501),
+              "num_tags": num_tags, "total_runs": total_runs,
+              "price_min": price_min, "price_max": price_max,
+              "relative_tolerance": bounded_float(payload, "relative_tolerance", .15, 0., 1.),
+              "absolute_tolerance": bounded_float(payload, "absolute_tolerance", 2., 0., 1e12),
+              "timeout_seconds": min(timeout, 30)}
     started = time.perf_counter()
-    completed = subprocess.run(
-        command,
-        cwd=str(PROJECT_ROOT),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-        timeout=timeout,
-    )
+    evaluations = {}
+    for name in names:
+        if progress_logger:
+            progress_logger(log=f"统一评价 {name}", stage="evaluation", progress=int(len(evaluations) / len(names) * 90))
+        if time.perf_counter() - started >= timeout:
+            raise TimeoutError("批量评价已达到总时间预算")
+        remaining = timeout - (time.perf_counter() - started)
+        evaluations[name] = evaluate_protocol(_find_protocol_file(scene, name), name, generator,
+            {**config, "timeout_seconds": min(config["timeout_seconds"], remaining / total_runs)})
+    folder = _scene_path(scene) / "outputs" / "candidate_comparisons" / uuid4().hex
+    identities = {tuple(item["summary"]["dataset_hashes"]) for item in evaluations.values()
+                  if item["summary"]["selection_eligible"]}
+    comparable = len(identities) <= 1
+    if not comparable:
+        for item in evaluations.values():
+            item["summary"]["selection_eligible"] = False
+            item["summary"]["exclusion_reasons"] = [*item["summary"]["exclusion_reasons"], "candidate_datasets_differ"]
+    save_json(folder / "comparison.json", {"scope": "python_quality_comparison", "config": config,
+              "datasets_comparable": comparable, "evaluations": evaluations})
+    rows = [{"name": name, **item["summary"],
+             "pass_rate": item["validation"]["semantic_pass_rate"],
+             "avg_time": item["validation"]["avg_time_ms"],
+             "timing_scope": "candidate_self_reported"} for name, item in evaluations.items()]
+    rows.sort(key=lambda row: (not row["selection_eligible"], -(row["quality_pass_rate"] or 0), -(row["quality_score"] or 0)))
+    for rank, row in enumerate(rows, 1):
+        row["rank"] = rank if row["selection_eligible"] else None
     wall_clock_s = round(time.perf_counter() - started, 3)
     return {
         "scene": scene,
         "protocols": protocols,
-        "command": command,
-        "returncode": completed.returncode,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
+        "scope": "python_quality_comparison",
+        "datasets_comparable": comparable,
+        "config": config,
+        "evidence_path": _relative_to_project(folder / "comparison.json"),
+        "returncode": 0,
+        "stdout": "统一验证已完成；自报时间不参与排名。",
+        "stderr": "",
         "wall_clock_s": wall_clock_s,
-        "results": _parse_batch_results(completed.stdout),
+        "results": rows,
     }
 
 
@@ -890,6 +921,7 @@ def _default_iteration_prefix_for_task(value: Any, task_profile: str) -> str:
 
 
 def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> dict[str, Any]:
+    started = time.perf_counter()
     scene = _validate_scene(str(payload.get("scene") or build_catalog()["defaults"]["scene"]))
     parents = _protocol_names(payload.get("parents") or payload.get("parent_names"))
     if len(parents) < 2:
@@ -907,6 +939,8 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
     prefix = _default_iteration_prefix_for_task(payload.get("prefix") or "web_auto_iter", task_profile)
     iterations = _coerce_int(payload, "iterations", 3, 1, 12)
     dry_run = boolean_value(payload, "dry_run", True)
+    if not dry_run and any(f"{prefix}_{i + 1:02d}" in available for i in range(iterations)):
+        raise ValueError("该前缀已有协议文件，请更换协议前缀，避免覆盖历史候选")
     llm_config = None if dry_run else _web_llm_config(payload)
     max_repair_rounds = _coerce_int(payload, "max_repair_rounds", 0 if dry_run else 1, 0, 5)
     validate_num_tags = _coerce_int(payload, "validate_num_tags", 80, 20, 5000)
@@ -914,12 +948,120 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
     target_generation = str(payload.get("target_generation") or "next")
     requirement_text = str(payload.get("requirement_text") or "")
 
+    selection_enabled = boolean_value(payload, "quality_selection", True) and task_profile != CUSTOM_TASK_PROFILE
+    objective = str(payload.get("selection_objective") or "quality_only")
+    if objective not in {"quality_only", "precision_constrained_cost"}:
+        raise ValueError("不支持的选择目标")
+    minimum_pass_rate = bounded_float(payload, "minimum_pass_rate", 1., 0., 1.)
+    patience = _coerce_int(payload, "no_improvement_rounds", 0, 0, 12)
+    target_cost = bounded_float(payload, "target_communication_cost_ms", 0., 0., 1e12)
+    control = OptimizationControl(_coerce_int(payload, "max_model_requests", 30, 1, 500),
+                                  _coerce_int(payload, "max_wall_seconds", 1800, 1, 86400),
+                                  getattr(progress_logger, "check_cancelled", None))
+    independent_enabled = boolean_value(payload, "independent_validation", True)
+    stop_reason, stagnant = "iterations_completed", 0
+    holdout_result = None
+    evaluation_config = {"scene": scene, "task_profile": task_profile, "security_mode": "strict",
+        "seed": _coerce_int(payload, "evaluation_seed", 1000, 0, 2**31 - 21),
+        "total_runs": _coerce_int(payload, "evaluation_runs", 3, 1, 20),
+        "num_tags": validate_num_tags,
+        "price_min": _coerce_int(payload, "evaluation_price_min", 1, 1, 100000),
+        "relative_tolerance": bounded_float(payload, "relative_tolerance", .15, 0., 1.),
+        "absolute_tolerance": bounded_float(payload, "absolute_tolerance", 2., 0., 1e12),
+        "timeout_seconds": _coerce_int(payload, "evaluation_timeout", 10, 1, 60)}
+    evaluation_config["price_max"] = _coerce_int(payload, "evaluation_price_max", 1000, evaluation_config["price_min"] + 1, 1000000)
+    if selection_enabled and objective == "precision_constrained_cost" and evaluation_config["price_max"] - evaluation_config["price_min"] + 1 > 10000:
+        raise ValueError("当前匿名信道支持最多 10000 个属性桶，请缩小评价范围")
+    population = list(dict.fromkeys(parents))
+    evaluations = {}
+    evidence_dir = None
+    run_record = None
+    if not dry_run and selection_enabled:
+        generator, _ = _load_scene_task(scene)
+        task_source = (_scene_path(scene) / "Task.py").read_bytes()
+        evidence_dir = _scene_path(scene) / "outputs" / "optimization_runs" / uuid4().hex
+        evidence_dir.mkdir(parents=True)
+        run_record = {"schema_version": "1.0", "status": "running", "scene": scene,
+            "task_profile": task_profile, "selection_objective": objective,
+            "minimum_pass_rate": minimum_pass_rate, "no_improvement_rounds": patience,
+            "target_communication_cost_ms": target_cost,
+            "evaluation_split": "development", "evaluation_config": evaluation_config,
+            "initial_population": list(population), "rounds": [], "artifact_hashes": {},
+            "cost_note": "Only worker-owned anonymous channel events can compete on simulated communication cost; not hardware RF time."}
+        (evidence_dir / "Task.source.txt").write_bytes(task_source)
+        run_record["artifact_hashes"]["Task.source.txt"] = hashlib.sha256(task_source).hexdigest()
+        save_json(evidence_dir / "run.json", run_record)
+
+        def evaluate_name(name):
+            if (_scene_path(scene) / "Task.py").read_bytes() != task_source:
+                run_record.update(status="failed", error_type="GeneratorChanged")
+                save_json(evidence_dir / "run.json", run_record)
+                raise ValueError("评价期间 Task.py 发生变化，请使用固定场景重新运行")
+            path = _find_protocol_file(scene, name)
+            current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            if name in evaluations and evaluations[name]["summary"]["source_sha256"] != current_hash:
+                run_record.update(status="failed", error_type="SourceChanged")
+                save_json(evidence_dir / "run.json", run_record)
+                raise ValueError(f"评价期间协议源码发生变化: {name}")
+            if name not in evaluations:
+                if progress_logger:
+                    progress_logger(f"固定开发集评价：{name}", stage="evaluation")
+                try:
+                    evaluations[name] = evaluate_protocol(path, name, generator, evaluation_config,
+                        deadline=control.started + control.max_seconds)
+                except Exception as exc:
+                    run_record.update(status="failed", error_type=type(exc).__name__)
+                    save_json(evidence_dir / "run.json", run_record)
+                    raise
+                run_record["artifact_hashes"][f"{name}.evaluation.json"] = save_json(evidence_dir / f"{name}.evaluation.json", evaluations[name])
+                snapshot_path = evidence_dir / f"{name}.source.txt"
+                snapshot_path.write_bytes(path.read_bytes())
+                snapshot_hash = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+                if snapshot_hash != evaluations[name]["summary"]["source_sha256"]:
+                    run_record.update(status="failed", error_type="SourceChanged")
+                    save_json(evidence_dir / "run.json", run_record)
+                    raise ValueError(f"评价期间协议源码发生变化: {name}")
+                run_record["artifact_hashes"][snapshot_path.name] = snapshot_hash
+                save_json(evidence_dir / "run.json", run_record)
+            return evaluations[name]
+
+        try:
+            for name in population:
+                evaluate_name(name)
+        except Exception as exc:
+            run_record.update(status="failed", error_type=type(exc).__name__)
+            save_json(evidence_dir / "run.json", run_record)
+            raise
+
+        population = select_population(population, evaluations, len(parents), objective=objective, minimum_pass_rate=minimum_pass_rate)
+        baseline_name = population[0]
+
+    def best_score():
+        if not evaluations:
+            return None
+        ranked = select_population(list(population), evaluations, 1, objective=objective, minimum_pass_rate=minimum_pass_rate)
+        row = evaluations[ranked[0]]["summary"]
+        if objective == "precision_constrained_cost" and row.get("communication_eligible") and row["quality_pass_rate"] >= minimum_pass_rate:
+            return (1, -row["mean_communication_cost_ms"], row["quality_score"])
+        return (0, row["quality_pass_rate"] or 0., row["quality_score"] or 0.)
+
     pairs = []
     for i, parent_a in enumerate(parents):
         for parent_b in parents[i + 1 :]:
             pairs.append((parent_a, parent_b))
+
+    def invoke_workflow(**kwargs):
+        try:
+            return run_ai_optimization_workflow(**kwargs)
+        except OptimizationStopped:
+            raise
+        except Exception as exc:
+            if run_record is not None:
+                run_record.update(status="failed", error_type=type(exc).__name__)
+                save_json(evidence_dir / "run.json", run_record)
+            raise
+
     results: list[dict[str, Any]] = []
-    started = time.perf_counter()
     if progress_logger:
         progress_logger(
             f"自动迭代已准备 {len(pairs)} 个父代组合，将执行 {iterations} 轮；模式：{'预览' if dry_run else '真实生成'}。",
@@ -927,6 +1069,19 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             stage="planning",
         )
     for index in range(iterations):
+        try:
+            control.check()
+        except OptimizationStopped as exc:
+            stop_reason = exc.reason
+            break
+        previous_score = best_score()
+        if not dry_run and target_cost > 0 and objective == "precision_constrained_cost" and previous_score is not None and previous_score[0] == 1 and -previous_score[1] <= target_cost:
+            stop_reason = "target_communication_cost"
+            break
+        if not dry_run and selection_enabled:
+            for name in population:
+                evaluate_name(name)
+            pairs = [(a, b) for i, a in enumerate(population) for b in population[i + 1:]]
         parent_a, parent_b = pairs[index % len(pairs)]
         protocol_name = f"{prefix}_{index + 1:02d}"
         logs: list[str] = []
@@ -965,7 +1120,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
                     stage=stage,
                 )
 
-        result = run_ai_optimization_workflow(
+        workflow_args = dict(
             scene_name=scene,
             parent_a=parent_a,
             parent_b=parent_b,
@@ -980,10 +1135,33 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             dry_run=dry_run,
             retry_attempts=retry_attempts,
             task_profile=task_profile,
-            requirement_text=requirement_text,
+            requirement_text=requirement_text + ("\n" + feedback_for(population, evaluations) if not dry_run and selection_enabled else ""),
             custom_task_text=custom_task_text,
             logger=iter_log,
         )
+        if not dry_run:
+            workflow_args["request_guard"] = control.before_request
+            workflow_args["evaluation_deadline"] = control.started + control.max_seconds
+        if not dry_run and selection_enabled and objective == "precision_constrained_cost":
+            workflow_args["requirement_text"] += (
+                "\n通信优化必须实现 execute_channel(self, channel, price_min, price_max)，返回 estimated_values 列表。"
+                "channel.observe(round_index=0, slots_per_value=256) 返回 counts、variance 列表及 saturated_bins。"
+                "列表索引对应 price_min+i。只处理匿名聚合观测，不接收 tags，不访问信道内部状态。"
+                "该接口仅允许导入 math、from base import IProtocol、__future__；使用内置列表与循环，不导入 numpy。"
+                "每次 observe（包括重复调用）计费，最多128次，slots_per_value 为2..32768。"
+                "通信模型 histogram_or_v1_slot001：reader_bit_ms=.025、tag_bit_ms=.4、slot_ms=.001、frame_ms=30。"
+                "execute 方法可作为兼容入口，但平台优先调用 execute_channel；在精度达标前先修复精度。")
+            workflow_args["requirement_text"] += (
+                f"最低语义通过率={minimum_pass_rate}，相对误差门槛={evaluation_config['relative_tolerance']}，"
+                f"绝对误差门槛={evaluation_config['absolute_tolerance']}；达标后再最小化通信成本。")
+        try:
+            result = invoke_workflow(**workflow_args)
+        except OptimizationStopped as exc:
+            stop_reason = exc.reason
+            if run_record is not None:
+                run_record["stopped_attempt"] = {"protocol_name": protocol_name, "parent_a": parent_a,
+                    "parent_b": parent_b, "reason": exc.reason, "used_for_selection": False}
+            break
         result["task_profile"] = task_profile
         result["task_title"] = task_guidance(task_profile, custom_task_text)["title"]
         request = {
@@ -1010,6 +1188,28 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             "logs": logs,
             "validation": result.get("validation"),
         }
+        if not dry_run and selection_enabled:
+            before = list(population)
+            for name in population:
+                evaluate_name(name)
+            target_exists = result.get("target_file") and Path(result["target_file"]).is_file()
+            if target_exists:
+                evaluate_name(protocol_name)
+                combined = [*population, protocol_name]
+                try:
+                    population = select_population(combined, evaluations, len(parents), objective=objective, minimum_pass_rate=minimum_pass_rate)
+                except ValueError:
+                    run_record.update(status="failed", error_type="IncomparableCandidates")
+                    save_json(evidence_dir / "run.json", run_record)
+                    raise
+                item["evaluation"] = evaluations[protocol_name]["summary"]
+            item["selection"] = {"objective": objective, "population_before": before,
+                "population_after": list(population), "retained": protocol_name in population,
+                "reason": "ranked_by_" + objective if target_exists else "candidate_file_unavailable"}
+            run_record["rounds"].append({key: item.get(key) for key in ("iteration", "parent_a", "parent_b", "protocol_name", "status", "evaluation", "selection")})
+            run_record["population"] = list(population)
+            run_record["budget"] = control.snapshot()
+            save_json(evidence_dir / "run.json", run_record)
         results.append(item)
         if progress_logger:
             progress_logger(
@@ -1019,6 +1219,40 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             )
         if not dry_run and result.get("status") == "success":
             available.add(protocol_name)
+        current_score = best_score()
+        if not dry_run and target_cost > 0 and objective == "precision_constrained_cost" and current_score is not None and current_score[0] == 1 and -current_score[1] <= target_cost:
+            stop_reason = "target_communication_cost"
+            break
+        stagnant = 0 if previous_score is not None and current_score > previous_score else stagnant + 1
+        if patience and selection_enabled and not dry_run and stagnant >= patience:
+            stop_reason = "no_improvement"
+            break
+    if run_record is not None:
+        if independent_enabled:
+            try:
+                control.check()
+                # Search is over. Freeze selection before exposing held-out results.
+                winner = select_population(population, evaluations, 1, objective=objective, minimum_pass_rate=minimum_pass_rate)[0]
+                run_record.update(status="validating_holdout", winner=winner, baseline=baseline_name, stop_reason=stop_reason)
+                save_json(evidence_dir / "run.json", run_record)
+                if progress_logger:
+                    progress_logger("搜索结束，正在执行冻结候选的独立验证。", stage="holdout")
+                holdout_result = independent_validation(evidence_dir, winner, baseline_name, evaluations, evaluation_config,
+                    deadline=control.started + control.max_seconds)
+                holdout_result["evidence_path"] = _relative_to_project(evidence_dir / "holdout" / "comparison.json")
+                for path in (evidence_dir / "holdout").iterdir():
+                    if path.is_file():
+                        run_record["artifact_hashes"]["holdout/" + path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OptimizationStopped as exc:
+                holdout_result = {"status": "skipped_" + exc.reason, "independent": False}
+            except Exception as exc:
+                holdout_result = {"status": "failed", "independent": False, "error_type": type(exc).__name__}
+        else:
+            holdout_result = {"status": "disabled", "independent": False}
+        run_record.update(status="cancelled" if stop_reason == "cancelled" else "success", population=list(population),
+            stop_reason=stop_reason, budget=control.snapshot(), independent_validation=holdout_result,
+            unranked_parents=[name for name in population if not evaluations[name]["summary"]["selection_eligible"]])
+        save_json(evidence_dir / "run.json", run_record)
     return {
         "scene": scene,
         "parents": parents,
@@ -1027,6 +1261,12 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
         "task_profile": task_profile,
         "custom_task_text": custom_task_text if task_profile == CUSTOM_TASK_PROFILE else "",
         "iterations": results,
+        "selection_mode": objective if selection_enabled else "generation_only",
+        "stop_reason": stop_reason, "budget": control.snapshot(), "independent_validation": holdout_result,
+        "population": population,
+        "unranked_parents": run_record.get("unranked_parents", []) if run_record else [],
+        "evaluation_config": evaluation_config if selection_enabled else None,
+        "evidence_path": _relative_to_project(evidence_dir / "run.json") if evidence_dir else None,
         "wall_clock_s": round(time.perf_counter() - started, 3),
         "state": selfopt_state(),
     }
@@ -1066,21 +1306,21 @@ def _protocol_metrics_for_scene(
     custom_task_text: str = "",
     num_tags: int,
     total_runs: int = 2,
+    protocol_file: Path | None = None,
 ) -> dict[str, Any]:
-    result = validate_selfopt_protocol(
-        {
-            "scene": scene,
-            "protocol": protocol,
-            "task_profile": task_profile,
-            "custom_task_text": custom_task_text,
-            "num_tags": num_tags,
-            "total_runs": total_runs,
-            "relative_tolerance": 0.2,
-        }
-    )
+    generator, _ = _load_scene_task(scene)
+    item = evaluate_protocol(protocol_file or _find_protocol_file(scene, protocol), protocol, generator,
+        {"scene": scene, "task_profile": task_profile, "security_mode": "strict", "seed": 1000,
+         "num_tags": num_tags, "total_runs": total_runs, "relative_tolerance": .2})
+    result = item["validation"]
     return {
-        "accuracy": max(0.0, min(1.0, float(result.get("pass_rate", 0.0)) / 100.0)),
-        "time": float(result.get("avg_time_ms", 0.0) or 0.0),
+        "accuracy": item["summary"]["quality_pass_rate"],
+        "time": result["avg_measured_wall_time_ms"] if result["completed_runs"] else None,
+        "timing_scope": "worker_measured_wall_excluding_startup_not_RF",
+        "quality_score": item["summary"]["quality_score"],
+        "communication_cost_ms": item["summary"]["mean_communication_cost_ms"],
+        "source_sha256": result["source_sha256"],
+        "final_decision": result["final_decision"],
         "validator_passed": bool(result.get("validator_passed")),
         "information_isolation_passed": bool(result.get("information_isolation_passed")),
     }
@@ -1104,11 +1344,10 @@ def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Pat
     if not generation_dirs:
         raise ValueError(f"场景 {scene_name} 没有 generation* 协议目录，无法生成进化图数据")
 
-    previous_generation_protocols: list[str] = []
     generations: list[dict[str, Any]] = []
-    all_times: list[float] = []
     raw_generation_rows: list[list[dict[str, Any]]] = []
-    for gen_index, generation_dir in enumerate(generation_dirs, start=1):
+    for generation_dir in generation_dirs:
+        gen_index = _generation_sort_key(generation_dir)[0]
         protocol_files = sorted([p for p in generation_dir.glob("*.py") if p.stem != "__init__"], key=lambda p: p.stem)
         rows: list[dict[str, Any]] = []
         for file_path in protocol_files:
@@ -1120,44 +1359,55 @@ def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Pat
                     custom_task_text=custom_task_text,
                     num_tags=num_tags,
                     total_runs=total_runs,
+                    protocol_file=file_path,
                 )
-            except Exception:
+            except Exception as exc:
+                rows.append({"name": file_path.stem, "generation": gen_index,
+                    "parent_A": None, "parent_B": None, "correction_count": None,
+                    "accuracy": None, "time": None, "quality_score": None,
+                    "provenance_status": "unavailable", "error_type": type(exc).__name__})
                 continue
-            all_times.append(metrics["time"])
+            provenance = {}
+            record_path = file_path.with_suffix(".candidate.json")
+            if record_path.is_file():
+                try:
+                    candidate = json.loads(record_path.read_text(encoding="utf-8"))
+                    if candidate.get("source_hash") == metrics["source_sha256"]:
+                        provenance = candidate
+                except (OSError, ValueError):
+                    pass
+            actual_parents = provenance.get("parents", [])
+            attempt = (provenance.get("validation_result") or {}).get("attempt")
             rows.append(
                 {
                     "name": file_path.stem,
                     "generation": gen_index,
-                    "parent_A": previous_generation_protocols[0] if previous_generation_protocols else None,
-                    "parent_B": previous_generation_protocols[1] if len(previous_generation_protocols) > 1 else None,
-                    "correction_count": 0 if file_path.stem.startswith("ModeQuery") else 1,
-                    "accuracy": metrics["accuracy"],
-                    "time": metrics["time"],
-                    "validator_passed": metrics["validator_passed"],
-                    "information_isolation_passed": metrics["information_isolation_passed"],
+                    "parent_A": actual_parents[0] if actual_parents else None,
+                    "parent_B": actual_parents[1] if len(actual_parents) > 1 else None,
+                    "correction_count": attempt - 1 if type(attempt) is int and attempt >= 1 else None,
+                    "provenance_status": "source_hash_verified" if provenance else "unavailable",
+                    **metrics,
                 }
             )
-        raw_generation_rows.append(rows)
-        previous_generation_protocols = [row["name"] for row in sorted(rows, key=lambda item: item["time"])[:2]]
+        raw_generation_rows.append((gen_index, rows))
 
-    best_time = min(all_times) if all_times else 0.0
-    worst_time = max(all_times) if all_times else 1.0
-    for gen_index, rows in enumerate(raw_generation_rows, start=1):
+    for gen_index, rows in raw_generation_rows:
         individuals = []
         for row in rows:
-            time_score = _normalise_score(row["time"], best_time, worst_time, higher_is_better=False)
-            row["fitness"] = round(0.65 * row["accuracy"] + 0.35 * time_score, 4)
+            row["fitness"] = row.get("quality_score")
             individuals.append(row)
-        individuals.sort(key=lambda item: (item["fitness"], -item["time"]), reverse=True)
+        individuals.sort(key=lambda item: (item.get("accuracy") or 0., item.get("fitness") or 0.), reverse=True)
         generations.append({"generation": gen_index, "individuals": individuals})
 
     payload_data = {
         scene_name: {
             "source": f"{scene_name}/generation*",
+            "schema_version": "2.0", "timing_scope": "worker_measured_wall_excluding_startup_not_RF",
+            "provenance_policy": "candidate_record_with_matching_source_hash_only",
             "task_profile": task_profile,
             "num_tags": num_tags,
             "total_runs": total_runs,
-            "base_algorithms": generations[0]["individuals"] if generations else [],
+            "base_algorithms": [],
             "generations": generations,
         }
     }
@@ -1194,8 +1444,11 @@ def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
                 num_tags=num_tags,
                 total_runs=total_runs,
             )
-        except Exception:
-            continue
+        except Exception as exc:
+            metrics = {"accuracy": None, "time": None, "timing_scope": "worker_measured_wall_excluding_startup_not_RF",
+                "quality_score": None, "communication_cost_ms": None, "source_sha256": None,
+                "final_decision": "failed:" + type(exc).__name__, "validator_passed": False,
+                "information_isolation_passed": False}
         rows.append({"protocol_name": name, **metrics})
     if not rows:
         raise ValueError(f"场景 {scene_name} 没有可执行协议，无法生成终稿图")
@@ -1204,7 +1457,7 @@ def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
     with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["protocol_name", "accuracy", "time", "validator_passed", "information_isolation_passed"],
+            fieldnames=list(rows[0]),
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -1251,6 +1504,9 @@ def run_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
             protocols,
             "--factors",
             factors,
+            "--task-profile", task_profile,
+            "--security-mode", str(payload.get("security_mode") or "strict"),
+            "--seed", str(_coerce_int(payload, "seed", 2000, 0, 2**31 - 1)),
             "--num-tags",
             str(_coerce_int(payload, "num_tags", 2000, 20, 200000)),
             "--price-min",
@@ -1282,12 +1538,14 @@ def run_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
             "--no-show",
         ]
     elif task == "plot_evolution":
-        scenario = str(payload.get("scenario") or "single_peak")
+        scenario = str(payload.get("scenario") or discover_scenes()[0])
         if scenario in discover_scenes():
             data_file, scenario = _scene_evolution_data_path(scenario, payload)
             data_path = _relative_to_project(data_file)
         else:
-            data_path = _safe_experiment_path(str(payload.get("data") or "Experiments/evolution_data_combined.json"), default_name="Experiments/evolution_data_combined.json")
+            if not payload.get("data"):
+                raise ValueError("请选择项目场景，或明确提供含计量范围和来源信息的进化数据")
+            data_path = _safe_experiment_path(str(payload["data"]), default_name="Experiments/evolution_data_combined.json")
         output_dir = _safe_experiment_path(str(payload.get("output_dir") or "Experiments"), default_name="Experiments")
         command = [
             sys.executable,
@@ -1417,6 +1675,8 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/selfopt/job":
                 job_id = query.get("id", [""])[0]
                 json_response(self, {"job": get_background_job(job_id)})
+            elif path == "/api/selfopt/jobs":
+                json_response(self, {"jobs": JOB_MANAGER.list()})
             elif path == "/api/selfopt/validation-reports":
                 limit = _coerce_int({"limit": query.get("limit", ["20"])[0]}, "limit", 20, 1, 200)
                 scene = query.get("scene", [""])[0].strip() or None
@@ -1496,10 +1756,17 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, result | {"state": selfopt_state()})
             elif path == "/api/selfopt/batch-test":
                 json_response(self, run_selfopt_batch_test(payload))
+            elif path == "/api/selfopt/batch-test-async":
+                json_response(self, {"job": JOB_MANAGER.submit("candidate_comparison", payload,
+                    lambda update: run_selfopt_batch_test(payload, update))}, HTTPStatus.ACCEPTED)
             elif path == "/api/selfopt/auto-iterate":
                 json_response(self, run_selfopt_auto_iterate(payload))
             elif path == "/api/selfopt/auto-iterate-async":
                 json_response(self, {"job": start_background_task("auto_iterate", payload)}, HTTPStatus.ACCEPTED)
+            elif path == "/api/selfopt/job/cancel":
+                json_response(self, {"job": JOB_MANAGER.cancel(str(payload.get("id") or ""))})
+            elif path == "/api/selfopt/job/retry":
+                json_response(self, {"job": retry_background_task(payload)}, HTTPStatus.ACCEPTED)
             elif path == "/api/selfopt/experiments":
                 json_response(self, run_experiment_task(payload))
             else:

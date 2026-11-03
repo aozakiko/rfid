@@ -185,7 +185,7 @@ class GatewayConfigurationTests(unittest.TestCase):
         payload = {"scene": "test", "parent_a": "ModeQuerySEM", "parent_b": "ModeQueryTKQ", "parents": ["ModeQuerySEM", "ModeQueryTKQ"], "protocol_name": "config_test", "prefix": "config_test", "iterations": 1, "base_url": "https://new.example/v1", "model": "new-model", "api_key_value": "new-key", "dry_run": False}
         with patch.object(web_app, "run_ai_optimization_workflow", return_value={"status": "success"}) as workflow, patch.object(web_app, "store_ai_job", return_value=1), patch.object(web_app, "selfopt_state", return_value={}):
             web_app.run_ai_generation(payload)
-            web_app.run_selfopt_auto_iterate(payload)
+            web_app.run_selfopt_auto_iterate({**payload, "quality_selection": False})
         self.assertEqual(workflow.call_count, 2)
         for call in workflow.call_args_list:
             config = call.kwargs["llm_config"]

@@ -110,6 +110,7 @@ class OpenAICompatibleClient:
     def __init__(self, config: LLMConfig):
         self.config = config
         self.resolved_endpoint: str | None = None
+        self.request_guard = None
 
     def list_models(self) -> list[str]:
         response_data = self._request_json("GET", "/v1/models")
@@ -215,9 +216,10 @@ class OpenAICompatibleClient:
 
         last_error: Exception | None = None
         for attempt in range(1, self.config.retry_attempts + 1):
+            remaining = self.request_guard() if self.request_guard else self.config.timeout_seconds
             req = request.Request(url=url, method=method, data=body, headers=headers)
             try:
-                with request.urlopen(req, timeout=self.config.timeout_seconds) as resp:
+                with request.urlopen(req, timeout=min(self.config.timeout_seconds, remaining)) as resp:
                     raw_body = resp.read().decode("utf-8")
                 break
             except error.HTTPError as exc:

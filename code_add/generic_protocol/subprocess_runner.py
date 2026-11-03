@@ -221,6 +221,15 @@ def run_protocol_file(
         results = LegacyProtocolAdapter(remote, protocol_name=protocol_name).run_many(tags, spec)
     except Exception as exc:
         return _failure_results(spec, protocol_name, f"invalid_protocol_output: {type(exc).__name__}: {exc}")
+    measured = response.get("instrumented_channel") if security_mode == "strict" else None
+    if measured is not None:
+        results = {task: replace(result, **measured["counters"], metadata={
+            **dict(result.metadata), "cost_origin": "instrumented_channel",
+            "cost_status": "measured" if measured["events"] else "missing",
+            "channel_model_id": measured["model_id"], "cost_model": measured["cost_model"],
+            "communication_cost_ms": measured["communication_cost_ms"],
+            "communication_events": measured["events"],
+        }) for task, result in results.items()}
     return {task: replace(result, metadata={**dict(result.metadata), "security_mode": security_mode,
             "runtime_isolation_enforced": security_mode == "strict", "source_sha256": source_hash,
             "measured_cpu_time_ms": response.get("measured_cpu_time_ms"),

@@ -46,7 +46,7 @@ def load_results_from_csv(filename: str) -> pd.DataFrame:
 
 
 def _plot_common(subset_df: pd.DataFrame):
-    for protocol_name in PROTOCOL_ORDER:
+    for protocol_name in [*PROTOCOL_ORDER, *sorted(set(subset_df['protocol_name']) - set(PROTOCOL_ORDER))]:
         if protocol_name in subset_df['protocol_name'].unique():
             group = subset_df[subset_df['protocol_name'] == protocol_name]
             style_info = PROTOCOL_STYLES.get(protocol_name, {'style': 'o--', 'label': protocol_name, 'color': 'gray'})
@@ -70,7 +70,7 @@ def plot_dominance_comparison(df: pd.DataFrame, output_dir: Path, show_plot: boo
     plt.tick_params(axis='both', which='major', labelsize=12)
     plt.title('众数标签占比对协议性能的影响', fontsize=16)
     plt.xlabel('众数标签占比', fontsize=14)
-    plt.ylabel('平均执行时间 (s)', fontsize=14)
+    plt.ylabel('Worker 实测时间 (s)', fontsize=14)
     plt.gca().xaxis.set_major_formatter(FuncFormatter('{:.0%}'.format))
     plt.yscale('log')
     plt.legend(fontsize=12, bbox_to_anchor=(0.7, 0.95), loc='upper center', ncol=2)
@@ -97,7 +97,7 @@ def plot_scale_comparison(df: pd.DataFrame, output_dir: Path, show_plot: bool):
     plt.tick_params(axis='both', which='major', labelsize=12)
     plt.title('标签总体规模对协议性能的影响', fontsize=16)
     plt.xlabel('标签总数', fontsize=14)
-    plt.ylabel('平均执行时间 (s)', fontsize=14)
+    plt.ylabel('Worker 实测时间 (s)', fontsize=14)
     plt.xscale('log')
     plt.yscale('log')
     plt.legend(fontsize=12, loc='upper left', ncol=2)
@@ -124,7 +124,7 @@ def plot_density_comparison(df: pd.DataFrame, output_dir: Path, show_plot: bool)
     plt.tick_params(axis='both', which='major', labelsize=12)
     plt.title('价格范围对协议性能的影响', fontsize=16)
     plt.xlabel('价格范围上限', fontsize=14)
-    plt.ylabel('平均执行时间 (s)', fontsize=14)
+    plt.ylabel('Worker 实测时间 (s)', fontsize=14)
     plt.xscale('log')
     plt.yscale('log')
     plt.legend(fontsize=12, loc='lower right', ncol=2)
@@ -151,6 +151,8 @@ def main():
     results_df = load_results_from_csv(args.csv)
     if results_df is None:
         return
+    if 'timing_scope' not in results_df or set(results_df['timing_scope'].dropna()) != {'worker_measured_wall_excluding_startup_not_RF'}:
+        raise ValueError('Historical CSV has no comparable measured timing scope; rerun the sensitivity experiment.')
 
     output_dir = resolve_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

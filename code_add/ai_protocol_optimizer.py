@@ -26,6 +26,11 @@ GENERATION_PATTERN = re.compile(r"^generation_?(\d+)$")
 CLASS_PATTERN = re.compile(r"class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 TASK_GUIDANCE = {
+    "top_k": {
+        "title": "高频属性 Top-k 查询",
+        "output": "返回频次最高的恰好 3 个属性值；并列按属性值升序选取，值域不足 3 时返回全部值。",
+        "objective": "利用匿名聚合响应识别高频属性，以完整集合、precision、recall 和 F1 评价，控制通信开销。",
+    },
     "mode_query": {
         "title": "离散属性众数/多众数查询",
         "output": "返回一个候选值列表，列表中的值应尽量属于真实众数集合。",
@@ -83,7 +88,13 @@ def task_guidance(task_profile: str, custom_task_text: str | None = None) -> dic
     profile = validate_task_profile(task_profile, custom_task_text)
     # TASK_GUIDANCE remains the user-facing prompt wording; semantic scope and
     # canonical task mapping come from generic_tasks.
-    guidance = dict(TASK_GUIDANCE[profile])
+    from generic_tasks import get_profile
+    registered = get_profile(profile)
+    guidance = dict(TASK_GUIDANCE.get(profile, {
+        "title": registered.title,
+        "output": registered.prompt_guidance.get("output_contract", "Follow the registered output contract."),
+        "objective": registered.prompt_guidance.get("objective", registered.description),
+    }))
     if profile == CUSTOM_TASK_PROFILE:
         guidance["custom_text"] = str(custom_task_text or "").strip()
     return guidance
@@ -156,7 +167,10 @@ def _parent_evidence(scene_path, names):
     for name in names:
         found = None
         for folder in (scene_path, PROJECT_ROOT / "base_protocol"):
-            candidates = [folder / f"{name}.py"] + [p / f"{name}.py" for p in sorted(folder.glob("generation*")) if p.is_dir()]
+            def generation_key(path):
+                match = GENERATION_PATTERN.fullmatch(path.name)
+                return int(match.group(1)) if match else -1
+            candidates = [folder / f"{name}.py"] + [p / f"{name}.py" for p in sorted(folder.glob("generation*"), key=generation_key, reverse=True) if p.is_dir()]
             found = next((p for p in candidates if p.is_file()), None)
             if found:
                 break
@@ -256,7 +270,7 @@ def _build_optimizer_prompt(
 5. verification_data 至少必须包含 frame_size 和 bits_per_slot；如果存在多阶段，还应补充 stage_frame_sizes 与 stage_bits_per_slot。
 6. 优先保证约束验证能通过：bits_per_slot <= 256，frame_size <= 32768。
 7. 仍然必须遵守信息隔离原则，不允许读写器直接依据 tag.price 做决策；如果仿真需要标签读取自身属性，请封装到 `_tag_response_*` 或 `_simulate_tag_*` 方法中，读写器主流程只处理匿名聚合帧。
-8. 对 execute() 返回的 estimated_values 必须保守，不要通过猜测堆出大量候选值；宁可少报，也不要返回明显无关的大列表。
+8. estimated_values 必须满足当前任务的完整输出语义；众数任务返回全部并列众数，Top-k 返回约定数量的高频值，不得用少报答案规避错误。
 9. 不得导入 os、sys、subprocess、socket、pathlib、shutil、tempfile、ctypes、requests 或 urllib，也不得调用 open/eval/exec/compile/__import__；严格验证会在 AST 和运行时双重拒绝。
 """
 
@@ -373,13 +387,14 @@ def _profile_metrics(estimated_values: list[Any], target_values: list[Any], task
 def _validate_protocol(
     protocol_file: Path, protocol_name: str, scene_name: str, validate_num_tags: int,
     task_profile: str, custom_task_text: str | None = None,
+    deadline=None,
 ) -> dict[str, Any]:
     from generic_protocol.validation import validate_candidate
     generator, config = _load_scene_task(scene_name)
     result = validate_candidate(protocol_file, protocol_name, generator, scene=scene_name,
         task_profile=validate_task_profile(task_profile, custom_task_text), security_mode="strict",
         total_runs=2, num_tags=max(20, int(validate_num_tags)),
-        price_min=int(config.get("PRICE_MIN", 1)), price_max=int(config.get("PRICE_MAX", 1000)))
+        price_min=int(config.get("PRICE_MIN", 1)), price_max=int(config.get("PRICE_MAX", 1000)), deadline=deadline)
     first = next(iter(result["samples"]), {})
     result.update(smoke_hit=result["is_valid"] and result["final_decision"] in {"passed", "execution_only"},
         estimated_values=first.get("estimated_values", []), target_values=first.get("target_values", []),
@@ -414,6 +429,8 @@ def run_ai_optimization_workflow(
     requirement_text: str | None = None,
     custom_task_text: str | None = None,
     logger=print,
+    request_guard=None,
+    evaluation_deadline=None,
 ) -> dict[str, Any]:
     task_profile = validate_task_profile(task_profile, custom_task_text)
     scene_path = PROJECT_ROOT / scene_name
@@ -422,6 +439,8 @@ def run_ai_optimization_workflow(
 
     target_dir = _resolve_target_generation(scene_path, target_generation)
     target_file = target_dir / f"{protocol_name}.py"
+    if not dry_run and target_file.exists():
+        raise ValueError(f"目标协议已存在，请更换协议名称: {protocol_name}")
     prompt_dir = scene_path / "prompts"
     prompt_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = prompt_dir / f"ai_{task_profile}_{protocol_name}_{parent_a}_{parent_b}.txt"
@@ -460,6 +479,7 @@ def run_ai_optimization_workflow(
         retry_attempts=retry_attempts,
     )
     client = OpenAICompatibleClient(config)
+    client.request_guard = request_guard
     _log(f"模型配置已解析: {config.model} @ {config.base_url}（{'自动识别接口' if config.endpoint_path == 'auto' else config.endpoint_path}）", logger)
 
     system_prompt = (
@@ -508,7 +528,8 @@ def run_ai_optimization_workflow(
 
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
-            target_file.write_bytes(code.encode("utf-8"))
+            with target_file.open("xb" if attempt == 1 else "wb") as output:
+                output.write(code.encode("utf-8"))
         except OSError as exc:
             journal.finish("error", error_type=type(exc).__name__)
             raise
@@ -518,7 +539,8 @@ def run_ai_optimization_workflow(
         _log("正在执行协议物理约束、任务烟测和信息隔离验证。", logger)
         try:
             last_validation = _validate_protocol(
-                target_file, protocol_name, scene_name, validate_num_tags, task_profile, custom_task_text
+                target_file, protocol_name, scene_name, validate_num_tags, task_profile, custom_task_text,
+                **({"deadline": evaluation_deadline} if evaluation_deadline is not None else {})
             )
         except Exception as exc:
             (attempt_folder / "protocol.py").write_bytes(code.encode("utf-8"))

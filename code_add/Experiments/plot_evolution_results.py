@@ -32,6 +32,8 @@ def load_and_prepare_data(scenario: str, data_path: str = 'evolution_data_combin
         return None, None
 
     data = full_data[scenario]
+    if data.get('schema_version') != '2.0' or data.get('timing_scope') != 'worker_measured_wall_excluding_startup_not_RF':
+        raise ValueError('Historical evolution data lacks measured timing/provenance; regenerate it from current candidate records.')
     records = []
 
     for indiv in data.get('base_algorithms', []):
@@ -41,8 +43,8 @@ def load_and_prepare_data(scenario: str, data_path: str = 'evolution_data_combin
                 'name': indiv['name'],
                 'parent_A': None,
                 'parent_B': None,
-                'correction_count': 0,
-                'accuracy': indiv.get('accuracy', 1.0),
+                'correction_count': indiv.get('correction_count'),
+                'accuracy': indiv.get('accuracy'),
                 'time': indiv['time'],
                 'fitness': indiv.get('fitness'),
             }
@@ -57,8 +59,8 @@ def load_and_prepare_data(scenario: str, data_path: str = 'evolution_data_combin
                     'name': indiv['name'],
                     'parent_A': indiv.get('parent_A'),
                     'parent_B': indiv.get('parent_B'),
-                    'correction_count': indiv.get('correction_count', 0),
-                    'accuracy': indiv.get('accuracy', 1.0),
+                    'correction_count': indiv.get('correction_count'),
+                    'accuracy': indiv.get('accuracy'),
                     'time': indiv['time'],
                     'fitness': indiv.get('fitness'),
                 }
@@ -70,17 +72,13 @@ def load_and_prepare_data(scenario: str, data_path: str = 'evolution_data_combin
         return pd.DataFrame(), pd.DataFrame()
 
     def calculate_custom_metrics(group):
-        top_5_fastest = group.sort_values('time').head(5)
-        avg_top5_time = top_5_fastest['time'].mean()
+        avg_top5_time = group['time'].mean()
         avg_overall_accuracy = group['accuracy'].mean()
         return pd.Series({'avg_time': avg_top5_time, 'avg_accuracy': avg_overall_accuracy})
 
     avg_metrics = df.groupby('generation').apply(calculate_custom_metrics).reset_index()
 
-    if 'fitness' in df.columns and df['fitness'].notna().all():
-        df_sorted = df.sort_values(by=['generation', 'fitness'], ascending=[True, False])
-    else:
-        df_sorted = df.sort_values(by=['generation', 'time'], ascending=[True, True])
+    df_sorted = df.sort_values(by=['generation', 'accuracy', 'fitness'], ascending=[True, False, False], na_position='last')
 
     best_individuals = df_sorted.drop_duplicates('generation', keep='first')
 
@@ -169,7 +167,7 @@ def plot_accuracy_convergence(stats_df: pd.DataFrame, scenario: str, output_dir:
 
 
 def plot_correction_counts(df: pd.DataFrame, scenario: str, output_dir: Path, show_plot: bool):
-    children_df = df[df['parent_A'].notna()].copy()
+    children_df = df[df['parent_A'].notna() & df['correction_count'].notna()].copy()
     if children_df.empty:
         print(f"场景 '{scenario}' 中没有子代数据，无法绘制纠正次数图。")
         return

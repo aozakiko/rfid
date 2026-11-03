@@ -14,7 +14,7 @@ def source_hashes(root: str | Path) -> dict[str, str]:
     root = Path(root).resolve()
     paths = {root / name for name in ("base.py", "hash.py", "Validator.py", "ai_protocol_optimizer.py",
         "backend_tools/protocol_metrics.py", "course_project/web_app.py", "course_project/statistics_service.py",
-        "course_project/engineering_service.py")}
+        "course_project/engineering_service.py", "course_project/candidate_evaluation.py")}
     for folder in ("stat_protocols", "benchmark", "generic_protocol", "generic_tasks"):
         paths.update((root / folder).glob("*.py"))
     return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths) if p.is_file()}

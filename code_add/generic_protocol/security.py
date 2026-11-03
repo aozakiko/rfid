@@ -213,6 +213,8 @@ class _SecurityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> Any:
+        if getattr(self, "measured_reader", False) and node.attr in {"format", "format_map"}:
+            self._security_issue(node, "blocked_introspection", "计量读写器禁止通过格式字符串反射访问对象内部")
         if node.attr in BLOCKED_MEMBERS:
             self._security_issue(node, "blocked_call", f"禁止访问成员 {node.attr}")
         if node.attr.startswith("__") and node.attr not in {"__init__", "__name__"}:
@@ -250,6 +252,8 @@ def analyze_source(source: str, *, strict: bool = True, source_name: str = "<pro
         }
 
     visitor = _SecurityVisitor(strict=strict)
+    visitor.measured_reader = any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "execute_channel"
+                                  for node in ast.walk(tree))
     visitor.visit(tree)
     violations = visitor.violations[:50]
     warnings = visitor.warnings[:50]

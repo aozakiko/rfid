@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from itertools import combinations
 from pathlib import Path
+import re
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -73,7 +74,11 @@ def _find_protocol_code(search_paths: list[Path], protocol_name: str) -> str:
             except Exception as exc:
                 return f"# Error: 读取文件 {protocol_file} 失败: {exc}"
 
-        for gen_dir in sorted(search_dir.glob("generation*")):
+        def generation_key(path):
+            match = re.fullmatch(r"generation_?(\d+)", path.name)
+            return int(match.group(1)) if match else -1
+
+        for gen_dir in sorted(search_dir.glob("generation*"), key=generation_key, reverse=True):
             if not gen_dir.is_dir():
                 continue
 

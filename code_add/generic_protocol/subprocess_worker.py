@@ -5,6 +5,8 @@ import contextlib
 import importlib.util
 import importlib
 import builtins
+import ast
+from types import ModuleType
 import random
 import json
 from pathlib import Path
@@ -56,12 +58,28 @@ def _load_protocol(protocol_file: str, protocol_name: str, source=None, strict=F
         if not report["passed"]:
             raise ValueError("strict AST check failed in worker")
         modules = {name: importlib.import_module(name) for name in ALLOWED_IMPORT_ROOTS}
+        measured_mode = any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "execute_channel"
+                            for node in ast.walk(ast.parse(source)))
+        if measured_mode:
+            # Do not share numpy/base module globals with a measured reader:
+            # replacing numpy.asarray could otherwise capture private channel IDs.
+            safe_math = ModuleType("math")
+            for name in dir(modules["math"]):
+                if not name.startswith("_"):
+                    setattr(safe_math, name, getattr(modules["math"], name))
+            safe_base = ModuleType("base")
+            safe_base.IProtocol = type("IProtocol", (), {})
+            modules = {"math": safe_math, "base": safe_base, "__future__": modules["__future__"]}
         def allowed_import(name, globals=None, locals=None, fromlist=(), level=0):
             if level or name.split(".")[0] not in modules or any(member in BLOCKED_MEMBERS or member == "*" for member in fromlist or ()):
                 raise PermissionError(f"import_not_allowed: {name}")
+            if measured_mode:
+                if "." in name:
+                    raise PermissionError("measured_reader_import_not_allowed")
+                return modules[name]
             return builtins.__import__(name, globals, locals, fromlist, level)
         def guarded_getattr(obj, name, *default):
-            if name in BLOCKED_MEMBERS or (name.startswith("__") and name not in {"__init__", "__name__"}):
+            if name in BLOCKED_MEMBERS or (measured_mode and name in {"format", "format_map"}) or (name.startswith("__") and name not in {"__init__", "__name__"}):
                 raise PermissionError(f"runtime_operation_blocked: attribute {name}")
             return builtins.getattr(obj, name, *default)
         allowed = {key: value for key, value in vars(builtins).items() if key not in BLOCKED_CALLS}
@@ -118,6 +136,7 @@ def main() -> int:
         protocol_file = request["protocol_file"]
         protocol_name = request["protocol_name"]
         tags = _tags_from_payload(request.get("tags"))
+        raw_tags = tags
         security_mode = str(request.get("security_mode") or "legacy")
         if security_mode not in {"legacy", "strict"}:
             raise ValueError("security_mode must be 'legacy' or 'strict'")
@@ -134,16 +153,32 @@ def main() -> int:
         random.seed(seed)
         import numpy as np
         np.random.seed(seed % (2 ** 32))
+        from generic_protocol.measured_channel import create_channel
+        # Construct before executing untrusted code or installing its audit hook.
         # Candidate imports and prints are kept away from the JSON stdout
         # protocol channel; stderr is captured by the parent runner.
         bounded = _BoundedOutput(sys.stderr)
         with contextlib.redirect_stdout(bounded), contextlib.redirect_stderr(bounded):
             protocol = _load_protocol(protocol_file, protocol_name, source=request.get("source"), strict=security_mode == "strict")
             execute = getattr(protocol, "execute", None)
-            if not callable(execute):
+            execute_channel = getattr(protocol, "execute_channel", None) if security_mode == "strict" else None
+            instrumented = callable(execute_channel)
+            if instrumented and not any(isinstance(node, ast.FunctionDef) and node.name == "execute_channel"
+                                        for node in ast.walk(ast.parse(request["source"]))):
+                raise PermissionError("measured_entrypoint_must_be_declared")
+            if not instrumented and not callable(execute):
                 raise TypeError(f"{protocol_name} has no callable execute(tags, price_min, price_max)")
             started, cpu_started = time.perf_counter(), time.process_time()
-            payload = execute(tags, price_min, price_max)
+            if instrumented:
+                channel, channel_evidence = create_channel(raw_tags, price_min, price_max, seed)
+                estimated = execute_channel(channel, price_min, price_max)
+                if not isinstance(estimated, list):
+                    raise TypeError("execute_channel must return a list")
+                measured = channel_evidence()
+                payload = {"estimated_values": estimated, "metric": 0, "execution_time": 0,
+                           "verification_data": {"frame_size": measured["frame_size"], "bits_per_slot": 1}}
+            else:
+                payload = execute(tags, price_min, price_max)
             measured_wall_ms = (time.perf_counter() - started) * 1000
             measured_cpu_ms = (time.process_time() - cpu_started) * 1000
         if isinstance(payload, dict):
@@ -159,6 +194,7 @@ def main() -> int:
         else:
             raise TypeError("execute must return a 4-item tuple or mapping")
         response = {"ok": True, "result": result, "measured_cpu_time_ms": measured_cpu_ms,
+                    "instrumented_channel": measured if instrumented else None,
                     "measured_wall_time_ms": measured_wall_ms,
                     "resource_limits": {k: v for k, v in limits.items() if not k.startswith("_")}}
     except Exception as exc:

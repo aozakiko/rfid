@@ -6,6 +6,8 @@ from copy import deepcopy
 from datetime import datetime
 from http import HTTPStatus
 import logging
+import json
+from pathlib import Path
 import threading
 import time
 from typing import Any, Callable
@@ -14,35 +16,98 @@ from uuid import uuid4
 from course_project.http_support import APIError
 
 LOGGER = logging.getLogger(__name__)
-TERMINAL_STATES = {"success", "failed"}
+TERMINAL_STATES = {"success", "failed", "cancelled", "interrupted"}
+
+
+class JobCancelled(RuntimeError):
+    pass
+
+
+class JobProgress:
+    def __init__(self, manager, job_id):
+        self.manager, self.job_id = manager, job_id
+
+    def check_cancelled(self):
+        if self.manager.get(self.job_id).get("cancel_requested"):
+            raise JobCancelled("cancelled_by_user")
+
+    def __call__(self, **changes):
+        self.manager.update(self.job_id, **changes)
+
+
+def _sanitize(value, secrets=()):
+    if isinstance(value, dict):
+        return {k: _sanitize(v, secrets) for k, v in value.items()
+                if k.lower() not in {"api_key", "api_key_value", "authorization", "password", "access_token"}}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize(item, secrets) for item in value]
+    if isinstance(value, str):
+        for secret in secrets:
+            value = value.replace(secret, "[redacted]")
+    return value
+
+
+def _credentials(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key.lower() in {"api_key", "api_key_value", "authorization", "password", "access_token"} and isinstance(item, str) and item:
+                yield item
+            else:
+                yield from _credentials(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _credentials(item)
 
 
 class JobManager:
-    def __init__(self, *, max_workers: int = 2, max_pending: int = 12, history_limit: int = 80):
+    def __init__(self, *, max_workers: int = 2, max_pending: int = 12, history_limit: int = 80, history_path=None):
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="selfopt")
         self._capacity = threading.BoundedSemaphore(max_pending)
         self._lock = threading.RLock()
         self._jobs: dict[str, dict[str, Any]] = {}
         self._history_limit = history_limit
+        self._history_path = Path(history_path) if history_path else None
+        self._secrets = {}
+        if self._history_path and self._history_path.is_file():
+            try:
+                rows = json.loads(self._history_path.read_text(encoding="utf-8"))
+                for row in rows[-history_limit:]:
+                    elapsed = max(0., float(row.pop("elapsed_s", 0.)))
+                    row["started_perf"] = time.perf_counter() - elapsed
+                    row["finished_perf"] = time.perf_counter()
+                    if row["status"] not in TERMINAL_STATES:
+                        row.update(status="interrupted", stage="interrupted", error="服务重启导致任务中断；可更换协议名称后重新运行。")
+                    self._jobs[row["id"]] = row
+            except (ValueError, TypeError, KeyError, OSError):
+                LOGGER.exception("Cannot recover background job history")
 
     def submit(self, kind: str, payload: dict[str, Any], work: Callable[[Callable[..., None]], Any]) -> dict[str, Any]:
         if not self._capacity.acquire(blocking=False):
             raise APIError("后台队列已满，请等待已有任务完成后重试", HTTPStatus.SERVICE_UNAVAILABLE)
         job_id = uuid4().hex
         with self._lock:
+            self._secrets[job_id] = tuple(_credentials(payload))
             self._jobs[job_id] = {
                 "id": job_id, "kind": kind, "status": "queued", "stage": "queued", "progress": 0,
                 "created_at": self._now(), "updated_at": self._now(), "started_perf": time.perf_counter(),
-                "payload": deepcopy({k: v for k, v in payload.items() if k not in {"api_key", "api_key_value"}}),
+                "payload": deepcopy(_sanitize(payload, self._secrets[job_id])), "cancel_requested": False,
                 "logs": ["任务已进入后台队列。"], "result": None, "error": "",
             }
             self._prune()
+            self._persist()
 
         def run() -> None:
             try:
+                progress = JobProgress(self, job_id)
+                progress.check_cancelled()
                 self.update(job_id, status="running", stage="initializing", progress=3, log="正在读取配置与父代协议。")
-                result = work(lambda **changes: self.update(job_id, **changes))
+                result = work(progress)
+                if self.get(job_id).get("cancel_requested"):
+                    self.update(job_id, status="cancelled", stage="cancelled", result=result, log="任务已停止，已完成的结果已保留。")
+                    return
                 self.update(job_id, status="success", stage="done", progress=100, result=result, log="任务完成。")
+            except JobCancelled:
+                self.update(job_id, status="cancelled", stage="cancelled", log="任务已在阶段边界停止。")
             except Exception as exc:
                 LOGGER.error("Background job %s failed", job_id, exc_info=True)
                 # Tracebacks stay in server logs. Client snapshots contain no credentials.
@@ -70,8 +135,34 @@ class JobManager:
             if changes.get("log"):
                 job["logs"] = (job["logs"] + [f"[{datetime.now():%H:%M:%S}] {changes['log']}"])[-300:]
             if job["status"] in TERMINAL_STATES:
-                job["finished_perf"] = time.perf_counter()
+                job.setdefault("finished_perf", time.perf_counter())
             job["updated_at"] = self._now()
+            self._jobs[job_id] = _sanitize(job, self._secrets.get(job_id, ()))
+            self._persist()
+
+    def cancel(self, job_id):
+        with self._lock:
+            if job_id not in self._jobs:
+                raise APIError("后台任务不存在或已过期", HTTPStatus.NOT_FOUND)
+            job = self._jobs[job_id]
+            if job["status"] not in TERMINAL_STATES:
+                job["cancel_requested"] = True
+                if job["status"] == "queued":
+                    self.update(job_id, status="cancelled", stage="cancelled")
+                else:
+                    self.update(job_id, stage="cancelling", log="已请求停止，当前操作结束后生效。")
+        return self.get(job_id)
+
+    def list(self):
+        with self._lock:
+            return [self.get(key) for key in reversed(self._jobs)]
+
+    def _persist(self):
+        if self._history_path is not None:
+            self._history_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._history_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps([self.get(key) for key in self._jobs], ensure_ascii=False, allow_nan=False), encoding="utf-8")
+            temporary.replace(self._history_path)
 
     def get(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -90,6 +181,7 @@ class JobManager:
                 break
             if self._jobs[job_id]["status"] in TERMINAL_STATES:
                 del self._jobs[job_id]
+                self._secrets.pop(job_id, None)
 
     def shutdown(self) -> None:
         # Accepted jobs finish before process exit, with no abandoned queued state.

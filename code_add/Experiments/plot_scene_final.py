@@ -29,6 +29,8 @@ def main() -> None:
     if df.empty:
         print(f"[error] Empty CSV: {csv_path}")
         return
+    if 'timing_scope' not in df or set(df['timing_scope'].dropna()) != {'worker_measured_wall_excluding_startup_not_RF'}:
+        raise ValueError('Timing provenance missing. Regenerate comparison data through the shared validator.')
 
     df = df.sort_values(["accuracy", "time"], ascending=[False, True])
     labels = df["protocol_name"].astype(str).tolist()
@@ -39,8 +41,8 @@ def main() -> None:
 
     fig_width = max(9.0, 0.68 * len(labels) + 3.5)
     fig, ax_time = plt.subplots(figsize=(fig_width, 5.4))
-    bars = ax_time.bar(x, df["time"], color="#2563eb", alpha=0.78, label="Avg time (ms)")
-    ax_time.set_ylabel("Average execution time (ms)")
+    bars = ax_time.bar(x, df["time"], color="#2563eb", alpha=0.78, label="Worker wall time (ms)")
+    ax_time.set_ylabel("Measured worker wall time (ms), excluding startup")
     ax_time.set_xlabel("Protocol")
     ax_time.set_xticks(list(x))
     ax_time.set_xticklabels(labels, rotation=24, ha="right")
@@ -52,8 +54,11 @@ def main() -> None:
     ax_acc.set_ylim(0, 105)
 
     best_idx = int(df.reset_index(drop=True).index[0])
-    bars[best_idx].set_color("#0f766e")
+    if df["accuracy"].notna().any():
+        bars[best_idx].set_color("#0f766e")
     ax_time.set_title(f"Final protocol comparison for scene: {args.scene}")
+    if df["accuracy"].isna().all():
+        ax_time.text(.5, .5, "No evaluable semantic results; see CSV failure records", transform=ax_time.transAxes, ha="center")
 
     lines, line_labels = ax_acc.get_legend_handles_labels()
     bar_lines, bar_labels = ax_time.get_legend_handles_labels()

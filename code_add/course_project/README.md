@@ -1,5 +1,7 @@
 # RFID 协议自优化 Web 平台
 
+项目总目标为“基于大模型的 RFID 射频识别通讯协议自优化研究平台开发”。2026-11-03 新增固定开发集质量评价、候选池更新与模型反馈，以及验证页的候选公平比较，详见[平台主线迭代记录](../../docs/yanxiao/平台主线迭代记录20261103.md)。自报时间不参与新质量选择；完整通信成本优化及独立效果实验仍需继续完善。
+
 首次使用请阅读 [仓库图文操作指南](../../README.md)，其中包含各页面截图、上传与预览操作、文件架构。
 
 本项目已统一为一个 Web 自优化平台，定位为“面向多维统计场景的 RFID 协议自优化 Web 平台开发”。平台不再是分散 GUI、脚本或单一众数查询演示，而是围绕“自然语言需求 -> 任务画像/GRDL 思路 -> 父代协议基因库 -> 大模型交叉变异 -> 在线沙箱验证 -> 实验图表与 outputs -> 自动迭代 -> 审计记录”形成闭环。
@@ -82,6 +84,12 @@ API Key 仅随请求提交，后台任务公开快照会剔除密钥，密钥不
 任务画像会进入三处：Prompt 约束、默认文件命名和验证口径。例如 `mean_estimation` 默认生成 `web_mean_estimation_candidate.py`，自动迭代会生成 `web_mean_estimation_iter_01.py` 这类候选；预览任务的状态会标记 `protocol_exists=false`，真实生成成功后才标记 `protocol_exists=true`。
 
 ## 主要 API
+
+2026-11-03 新增后台任务历史、停止与重试：GET /api/selfopt/jobs；POST /api/selfopt/job/cancel（id）；POST /api/selfopt/job/retry（id 与当前模型配置）。任务历史持久化，重启后的未完成任务标记为 interrupted，重试使用新名称重新运行。
+
+自动迭代可选择 selection_objective=precision_constrained_cost，按 minimum_pass_rate 约束选择平台计量的模拟通信成本；兼容 quality_only 质量探索。independent_validation 默认启用，搜索后冻结赢家与初始基线，检查验证数据重叠。可配置 max_model_requests、max_wall_seconds、no_improvement_rounds 和 target_communication_cost_ms，记录实际消耗及停止原因。
+
+新接口、模型口径、限制和旧实验迁移详见[平台通信优化与独立验证迭代记录](../../docs/yanxiao/平台通信优化与独立验证迭代记录20261103.md)。
 
 - `GET /api/selfopt/state`：读取平台状态、场景资产、实验产物、outputs、AI 环境状态。
 - `GET /api/selfopt/file?path=...` / `POST /api/selfopt/file`：读取与保存项目文本资产。

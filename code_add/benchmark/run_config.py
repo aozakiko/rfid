@@ -38,6 +38,7 @@ CONFIG_FIELDS = (
     "noise_rate",
     "extreme_rate",
     "split",
+    "llm_candidate",
 )
 CANONICAL_PROFILE_TASKS = {
     "mean_estimation": "mean",
@@ -121,6 +122,7 @@ class RunConfig:
     noise_rate: float = 0.0
     extreme_rate: float = 0.0
     split: str = "evaluation"
+    llm_candidate: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         _validate_config(self)
@@ -182,6 +184,13 @@ def _validate_config(config: RunConfig) -> None:
             raise ValueError(f"{field} must be a finite number in [0, 1]")
     if not isinstance(config.split, str) or config.split not in SUPPORTED_SPLITS:
         raise ValueError(f"unsupported split: {config.split!r}")
+    if config.llm_candidate is not None:
+        if not isinstance(config.llm_candidate, dict):
+            raise ValueError("llm_candidate must be a candidate JSON object")
+        from stat_protocols.genotype import compile_candidate
+        compile_candidate(config.llm_candidate)
+    if "llm_random" in config.protocols and config.llm_candidate is None:
+        raise ValueError("llm_random requires llm_candidate with model and prompt/response provenance")
 
 
 def _reject_constant(value: str) -> None:
@@ -214,7 +223,7 @@ def load_config(path: str | os.PathLike[str]) -> RunConfig:
     if not isinstance(data, dict):
         raise ValueError("config root must be a JSON object")
     unknown = sorted(set(data) - set(CONFIG_FIELDS))
-    missing = sorted(set(CONFIG_FIELDS) - set(data))
+    missing = sorted(set(CONFIG_FIELDS) - {"llm_candidate"} - set(data))
     if unknown:
         raise ValueError(f"unknown config fields: {', '.join(unknown)}")
     if missing:
@@ -437,6 +446,11 @@ def run_config(path: str | os.PathLike[str], output_override: str | os.PathLike[
     summary_path = output_dir / "summary.csv"
     manifest_path = output_dir / "manifest.json"
     try:
+        if config.llm_candidate is not None:
+            candidate_path = output_dir / "llm_candidate.json"
+            candidate_path.write_text(json.dumps(config.llm_candidate, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+            manifest["llm_candidate_sha256"] = hashlib.sha256(candidate_path.read_bytes()).hexdigest()
+            manifest["output_files"].append("llm_candidate.json")
         resolved = resolve_canonical_tasks(config.profiles)
         canonical_tasks, by_profile = _resolve_profile_tasks(config.profiles, resolved)
         support = _profile_support_payload(config, canonical_tasks, by_profile, run_id)
@@ -453,6 +467,7 @@ def run_config(path: str | os.PathLike[str], output_override: str | os.PathLike[
                 sizes=config.sizes,
                 distributions=config.distributions,
                 protocol_names=config.protocols,
+                llm_candidate=config.llm_candidate,
             )
         write_results(reports, results_path, summary_path)
         manifest["run_count"] = len(reports)

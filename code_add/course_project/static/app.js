@@ -905,6 +905,7 @@ async function startAsyncJob(kind, payload) {
 function setJobBusy(kind, busy) {
   const ids = kind === "ai" ? ["previewAi", "runAi"] : ["runIteration"];
   ids.forEach((id) => ($(id).disabled = busy));
+  if (kind === "iterate") $("cancelIteration").disabled = !busy;
 }
 function pollJob(id, kind) {
   const prefix = kind === "ai" ? "ai" : "iteration";
@@ -918,7 +919,7 @@ function pollJob(id, kind) {
         `/api/selfopt/job?id=${encodeURIComponent(id)}`,
       );
       renderProgress(job, prefix);
-      complete = ["success", "failed"].includes(job.status);
+      complete = ["success", "failed", "cancelled", "interrupted"].includes(job.status);
       if (complete) {
         if (job.result?.state) {
           state.selfopt = job.result.state;
@@ -957,6 +958,7 @@ function pollJob(id, kind) {
     if (complete) {
       delete state.activeJobs[kind];
       setJobBusy(kind, false);
+      refreshIterationHistory();
     } else {
       state.pollers[prefix] = setTimeout(poll, 1500);
     }
@@ -1241,6 +1243,18 @@ async function runIteration() {
       custom_task_text: customTaskTextFor("iterate"),
       requirement_text: $("iterateRequirementText").value,
       max_repair_rounds: Number($("iterateRepairRounds").value),
+      quality_selection: $("iterateQualitySelection").checked,
+      selection_objective: $("iterateObjective").value,
+      minimum_pass_rate: Number($("iterateMinPassRate").value),
+      max_model_requests: Number($("iterateMaxRequests").value),
+      max_wall_seconds: Number($("iterateMaxSeconds").value),
+      no_improvement_rounds: Number($("iteratePatience").value),
+      target_communication_cost_ms: Number($("iterateTargetCost").value),
+      independent_validation: $("iterateHoldout").checked,
+      evaluation_seed: Number($("iterateEvaluationSeed").value),
+      evaluation_runs: Number($("iterateEvaluationRuns").value),
+      evaluation_price_min: Number($("iterateEvaluationMin").value),
+      evaluation_price_max: Number($("iterateEvaluationMax").value),
       ...llmPayload(),
       validate_num_tags: Number($("iterateValidateTags").value),
     });
@@ -1252,11 +1266,59 @@ async function runIteration() {
     setJobBusy("iterate", Boolean(state.activeJobs.iterate));
   }
 }
+async function refreshIterationHistory() {
+  try {
+    const { jobs } = await api("/api/selfopt/jobs");
+    const rows = jobs.filter(job => job.kind === "auto_iterate").slice(0, 12);
+    const host = $("iterationJobHistory");
+    host.textContent = rows.length ? "" : "暂无自动迭代后台任务";
+    for (const job of rows) {
+      const row = document.createElement("div");
+      row.textContent = job.created_at + " · " + job.status + " · " + (job.payload?.prefix || "") + (job.error ? " · " + job.error : "");
+      const button = document.createElement("button"); button.className = "btn secondary";
+      button.textContent = ["queued", "running"].includes(job.status) ? "继续查看进度" : "查看运行结果";
+      button.onclick = () => {
+        if (["queued", "running"].includes(job.status)) pollJob(job.id, "iterate");
+        else {
+          renderProgress(job, "iteration");
+          state.lastIteration = job.result;
+          renderIterationResult();
+        }
+      };
+      row.appendChild(button); host.appendChild(row);
+      if (["failed", "cancelled", "interrupted"].includes(job.status)) {
+        const retry = document.createElement("button"); retry.className = "btn secondary";
+        retry.textContent = "使用新名称重新运行";
+        retry.onclick = async () => {
+          try {
+            const response = await api("/api/selfopt/job/retry", {method: "POST", body: JSON.stringify({id: job.id, ...llmPayload()})});
+            pollJob(response.job.id, "iterate"); refreshIterationHistory();
+          } catch (error) { setStatus(error.message, "error"); }
+        };
+        row.appendChild(retry);
+      }
+    }
+  } catch (error) { $("iterationJobHistory").textContent = error.message; }
+}
 function renderIterationResult() {
   const d = state.lastIteration;
   if (!d) return;
   $("iterationSummary").textContent =
     `${d.iterations.length} 轮 / ${d.dry_run ? "预览" : "真实生成"}`;
+  $("iterationSelection").innerHTML = d.dry_run ? "预览仅生成 Prompt，不执行评价或父代选择。"
+    : `<b>${d.selection_mode === "precision_constrained_cost" ? "精度约束下的模拟通信成本选择" : d.selection_mode === "quality_only" ? "固定开发集质量选择" : "仅生成，不自动选择"}</b><br>最终父代池：${esc((d.population || d.parents || []).join(", "))}<br>自报通信和耗时不参与排名。${d.evidence_path ? `<br><button class="btn secondary" id="viewIterationEvidence" type="button">查看评价与选择记录</button>` : ""}`;
+  if ($("viewIterationEvidence")) $("viewIterationEvidence").onclick = () => previewText(d.evidence_path, "优化运行记录", "iterate");
+  $("iterationSelection").insertAdjacentHTML("beforeend", "<br>停止原因：" + esc(d.stop_reason || "iterations_completed") + "；模型请求数：" + esc(d.budget?.model_requests ?? 0));
+  if (d.independent_validation) {
+    const h = d.independent_validation;
+    $("iterationSelection").insertAdjacentHTML("beforeend", "<br>独立验证：" + esc(h.status) + (h.independent ? "；冻结候选：" + esc(h.winner) + "；验证通过：" + esc(h.winner_passed) : "；尚未建立独立验证结论"));
+    if (h.evidence_path) {
+      const button = document.createElement("button");
+      button.className = "btn secondary"; button.textContent = "查看独立验证记录";
+      button.onclick = () => previewText(h.evidence_path, "独立验证", "iterate");
+      $("iterationSelection").appendChild(button);
+    }
+  }
   const pagedIterations = pageRows(
     "iterationRows",
     d.iterations,
@@ -1267,7 +1329,8 @@ function renderIterationResult() {
         .map((r) => {
           const isPreview = r.status === "dry_run" || d.dry_run;
           const canView = r.target_file && !isPreview;
-          return `<tr><td>${esc(r.iteration)}</td><td>${esc(r.parent_a)} + ${esc(r.parent_b)}</td><td><b>${esc(r.protocol_name)}</b><div class="muted">job #${esc(r.job_id)}</div></td><td><span class="pill ${r.status === "success" ? "green" : isPreview ? "blue" : "amber"}">${esc(isPreview ? "预览" : r.status)}</span></td><td><button class="btn secondary" type="button" data-preview="${esc(r.prompt_file || "")}">查看 Prompt</button></td><td>${canView ? `<button class="btn secondary" type="button" data-protocol="${esc(r.target_file)}">查看协议</button>` : `<button class="btn secondary" type="button" data-missing="${esc(r.target_file || "")}">未生成协议</button>`}</td></tr>`;
+          const selection = r.selection ? `<div class="muted">${r.selection.retained ? "保留为后续父代" : "未进入父代池"}${r.evaluation?.semantic_available ? ` · 通过率 ${statPercent(r.evaluation.quality_pass_rate)} · 质量 ${fmtStat(r.evaluation.quality_score, 3)}` : " · 不可评价或无有效文件"}</div>` : "";
+          return `<tr><td>${esc(r.iteration)}</td><td>${esc(r.parent_a)} + ${esc(r.parent_b)}</td><td><b>${esc(r.protocol_name)}</b><div class="muted">job #${esc(r.job_id)}</div></td><td><span class="pill ${r.status === "success" ? "green" : isPreview ? "blue" : "amber"}">${esc(isPreview ? "预览" : r.status)}</span>${selection}</td><td><button class="btn secondary" type="button" data-preview="${esc(r.prompt_file || "")}">查看 Prompt</button></td><td>${canView ? `<button class="btn secondary" type="button" data-protocol="${esc(r.target_file)}">查看协议</button>` : `<button class="btn secondary" type="button" data-missing="${esc(r.target_file || "")}">未生成协议</button>`}</td></tr>`;
         })
         .join("")
     : empty(6);
@@ -1297,6 +1360,43 @@ function renderIterationResult() {
             `当前轮次是预览任务，只生成 Prompt，不创建协议文件。\n目标路径预留为：${rel(el.dataset.missing)}`,
           )),
     );
+}
+async function runCandidateComparison() {
+  const button = $("runCandidateComparison"), host = $("candidateComparisonOutput");
+  button.disabled = true;
+  try {
+    const { job } = await api("/api/selfopt/batch-test-async", { method: "POST", body: JSON.stringify({
+      scene: $("validateScene").value,
+      protocols: splitNames($("comparisonProtocols").value || $("validateProtocol").value),
+      task_profile: $("validateTaskProfile").value,
+      custom_task_text: customTaskTextFor("validate"),
+      security_mode: $("validateSecurityMode").value,
+      num_tags: Number($("validateNumTags").value), total_runs: Number($("validateRuns").value),
+      seed: Number($("validateSeed").value), price_min: Number($("validatePriceMin").value),
+      price_max: Number($("validatePriceMax").value), relative_tolerance: Number($("validateTolerance").value),
+    }) });
+    async function poll() {
+      try {
+        const { job: current } = await api('/api/selfopt/job?id=' + encodeURIComponent(job.id));
+        if (!["success", "failed", "cancelled", "interrupted"].includes(current.status)) {
+          host.textContent = (current.logs || []).slice(-1)[0] || "比较进行中";
+          setTimeout(poll, 1500);
+          return;
+        }
+        button.disabled = false;
+        if (current.status !== "success") { host.textContent = current.error || current.status; return; }
+        const result = current.result;
+        host.innerHTML = (result.datasets_comparable === false ? '<p>数据身份不一致，已禁止排名；请检查场景生成器是否可按 seed 复现。</p>' : '') + '<div class="scroll"><table><thead><tr><th>质量排名</th><th>协议</th><th>完整答案通过率</th><th>质量分数</th><th>判定</th></tr></thead><tbody>'
+          + result.results.map(r => '<tr><td>' + esc(r.rank ?? '不排名') + '</td><td>' + esc(r.name)
+            + '</td><td>' + statPercent(r.quality_pass_rate) + '</td><td>' + fmtStat(r.quality_score, 3)
+            + '</td><td>' + esc(validationStatusLabel(r.final_decision)) + '</td></tr>').join('')
+          + '</tbody></table></div><button class="btn secondary" id="viewComparisonEvidence" type="button">查看逐次评价记录</button>';
+        $("viewComparisonEvidence").onclick = () => previewText(result.evidence_path, "候选比较记录", "modal");
+      } catch (e) { host.textContent = e.message; button.disabled = false; }
+    }
+    host.textContent = "已提交，等待逐候选评价";
+    setTimeout(poll, 800);
+  } catch (e) { host.textContent = e.message; button.disabled = false; }
 }
 async function runExperiment(task, button = null) {
   const names = {
@@ -1603,9 +1703,19 @@ function bind() {
     };
   });
   $("runValidate").onclick = runValidate;
+  $("runCandidateComparison").onclick = runCandidateComparison;
   if ($("refreshValidationHistory")) $("refreshValidationHistory").onclick = loadValidationHistory;
   if ($("refreshCandidateLineage")) $("refreshCandidateLineage").onclick = loadCandidateLineage;
   $("runIteration").onclick = runIteration;
+  $("refreshIterationHistory").onclick = refreshIterationHistory;
+  $("cancelIteration").onclick = async () => {
+    const id = state.activeJobs.iterate;
+    if (!id) return;
+    try {
+      await api("/api/selfopt/job/cancel", { method: "POST", body: JSON.stringify({id}) });
+      setStatus("已请求停止，当前操作结束后生效", "busy");
+    } catch (error) { setStatus(error.message, "error"); }
+  };
   $("useTopIterParents").onclick = fillRecommendedParents;
   $("iterateParents").oninput = renderParentPoolBars;
   if ($("promptParentsText"))
@@ -1613,6 +1723,7 @@ function bind() {
   $("taskProfile").onchange = () => {
     updateNamesForTask(true);
     renderTaskProfileInfo();
+    refreshIterationHistory();
   };
   $("validateTaskProfile").onchange = renderTaskProfileInfo;
   $("iterateTaskProfile").onchange = () => {
@@ -1652,6 +1763,7 @@ prepareWorkspace();
 installAssetUploads();
 mountNav();
 bind();
+refreshIterationHistory();
 switchView(location.hash.slice(1) || "overview");
 loadState(false)
   .then(() => {

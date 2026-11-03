@@ -254,7 +254,7 @@ async function pollStatisticsJob(id, kind) {
     if (job.status === "success") {
       if (kind === "statistics_llm") selectStatisticsCandidate(job.result);
       else await loadStatistics();
-    } else if (job.status !== "failed") {
+    } else if (!["failed", "cancelled", "interrupted"].includes(job.status)) {
       statisticsUI.job = setTimeout(() => pollStatisticsJob(id, kind), 1800);
       return;
     }
@@ -340,7 +340,7 @@ async function pollConfigJob(id) {
   try {
     const { job } = await api(`/api/selfopt/job?id=${encodeURIComponent(id)}`);
     $("configJobLog").textContent = `${job.status} · ${job.progress}% · ${job.elapsed_s}s\n${job.logs.join('\n')}${job.error ? '\n' + job.error : ''}`;
-    if (job.status !== "success" && job.status !== "failed") { configPoller = setTimeout(() => pollConfigJob(id), 1500); return; }
+    if (!["success", "failed", "cancelled", "interrupted"].includes(job.status)) { configPoller = setTimeout(() => pollConfigJob(id), 1500); return; }
     configPoller = null;
     await loadConfigRun(job.result?.run_id || '');
   } catch (e) { $("configJobLog").textContent = e.message; configPoller = null; }

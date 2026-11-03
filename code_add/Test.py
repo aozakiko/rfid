@@ -6,6 +6,8 @@ from pathlib import Path
 from importlib import import_module
 from importlib.util import spec_from_file_location
 from typing import Dict, List, Any, Callable
+from generic_protocol.validation import seeded_tags
+from generic_protocol.base import mode_truth
 
 # 确保可以找到 base.py 和 Validator.py
 try:
@@ -78,7 +80,7 @@ def run_performance_test(
     print(f"\n--- 正在为协议 [{protocol_name}] 在场景 [{config['scene']}] 下执行 {total_runs} 次性能模拟 ---")
     
     for i in range(total_runs):
-        tag_set, true_info = generate_tags_func(num_tags, price_min, price_max)
+        tag_set, true_info = seeded_tags(generate_tags_func, config.get('seed', 0) + i, num_tags, price_min, price_max)
         
         try:
             estimated_modes, _, execution_time, _ = protocol_instance.execute(
@@ -88,9 +90,9 @@ def run_performance_test(
             total_execution_time += execution_time
             
             is_correct = False
-            true_modes = true_info.get('modes', [])
+            true_modes = mode_truth(tag_set)
             if estimated_modes and true_modes:
-                if set(estimated_modes).issubset(set(true_modes)):
+                if set(estimated_modes) == set(true_modes):
                     is_correct = True
             
             if is_correct:
@@ -108,7 +110,9 @@ def run_performance_test(
     return {
         "name": protocol_name,
         "pass_rate": pass_rate,
-        "avg_time": avg_execution_time
+        "avg_time": avg_execution_time,
+        "timing_scope": "candidate_self_reported",
+        "execution_scope": "historical_direct_cli_use_web_for_sandbox",
     }
 
 def print_summary_report(results: List[Dict[str, Any]], config: Dict[str, Any]):

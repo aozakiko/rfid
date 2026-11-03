@@ -635,6 +635,14 @@
             <div id="validationHistory" class="validation-history">等待验证记录</div>
           </section>
           <section class="panel pad" style="margin-top: 16px">
+            <h2>候选公平比较</h2>
+            <p class="mini-note">使用上方场景、任务画像、标签数、seed、重复次数、属性范围及安全模式，逐个协议在相同数据上评价。自报时间仅作诊断，不参与排名；完整众数集合和 Top-k 按完整答案检查。</p>
+            <label>协议名称（逗号分隔，可用 * 匹配；留空比较当前验证协议）</label>
+            <input id="comparisonProtocols" placeholder="例如 ModeQuery*, web_mode_query_candidate" />
+            <div class="actions"><button class="btn teal" id="runCandidateComparison" type="button">比较候选与基线</button></div>
+            <div id="candidateComparisonOutput" class="mini-note">尚未提交比较任务</div>
+          </section>
+          <section class="panel pad" style="margin-top: 16px">
             <div class="panel-head" style="padding: 0 0 12px; border-bottom: 0"><h2>候选记录与父代谱系</h2><button class="btn secondary" id="refreshCandidateLineage" type="button">刷新候选</button></div>
             <p class="mini-note">展示已有记录中的父代、验证证据和源码一致性。缺少记录的历史协议不推断父代关系。</p>
             <div id="candidateLineage">等待候选记录</div>
@@ -643,9 +651,9 @@
 
         <section id="view-iterate" class="view">
           <div class="guide">
-            <b>本页说明：</b>自动迭代是课程项目最核心的闭环：父代池两两组合 ->
-            生成 Prompt -> 调用模型 -> 保存子代 -> 验证 ->
-            审计记录。页面会实时显示轮次、模型连接、生成文件和验证结果。
+            <b>本页说明：</b>从父代协议出发，调用大模型生成子代，经验证后在固定开发集上比较质量，
+            保留较优候选作为后续父代，并将评价反馈写入下一轮 Prompt。
+            自报时间不参与选择；开发集结果需另做独立验证。
             <div class="help-list">
               <div><b>只预览迭代任务：</b>每轮只生成 Prompt 和目标路径。</div>
               <div>
@@ -653,7 +661,7 @@
               </div>
               <div>
                 <b>父代协议池：</b
-                >参与交叉的协议集合；至少两个，系统会两两组合。
+                >初始协议集合；至少两个。开启质量选择后，候选池会随评价结果更新。
               </div>
             </div>
           </div>
@@ -689,6 +697,18 @@
                   <label>修复轮数</label
                   ><input id="iterateRepairRounds" type="number" value="1" />
                 </div>
+                <div><label>评价起始 seed</label><input id="iterateEvaluationSeed" type="number" min="0" value="1000" /></div>
+                <div><label>每候选评价次数</label><input id="iterateEvaluationRuns" type="number" min="1" max="20" value="3" /></div>
+                <div><label>评价属性下限</label><input id="iterateEvaluationMin" type="number" min="1" value="1" /></div>
+                <div><label>评价属性上限</label><input id="iterateEvaluationMax" type="number" value="1000" /></div>
+                <div class="check-row"><input id="iterateQualitySelection" type="checkbox" checked /><span>按质量更新父代（自定义任务仅生成）</span></div>
+                <div><label>选择目标</label><select id="iterateObjective"><option value="precision_constrained_cost">精度达标后降低模拟通信成本</option><option value="quality_only">仅按任务质量选择</option></select></div>
+                <div><label>最低精度通过率（0～1）</label><input id="iterateMinPassRate" type="number" min="0" max="1" step="0.05" value="1" /></div>
+                <div><label>最大模型 HTTP 请求数（含重试）</label><input id="iterateMaxRequests" type="number" min="1" max="500" value="30" /></div>
+                <div><label>运行时间预算（秒，阶段间检查）</label><input id="iterateMaxSeconds" type="number" min="1" max="86400" value="1800" /></div>
+                <div><label>连续无改进停止（0 为关闭）</label><input id="iteratePatience" type="number" min="0" max="12" value="3" /></div>
+                <div><label>目标模拟通信成本 ms（0 为关闭）</label><input id="iterateTargetCost" type="number" min="0" value="0" /></div>
+                <div class="check-row"><input id="iterateHoldout" type="checkbox" checked /><span>搜索结束后冻结候选并独立验证</span></div>
                 <div class="check-row">
                   <input id="iteratePreviewOnly" type="checkbox" /><span
                     >只预览迭代任务，不调用模型</span
@@ -720,6 +740,7 @@
                 ><button class="btn blue" id="runIteration" type="button">
                   启动自动迭代
                 </button>
+                <button class="btn secondary" id="cancelIteration" type="button" disabled>停止当前迭代</button>
               </div>
             </section>
             <section class="panel pad">
@@ -736,6 +757,7 @@
               <h2>自动迭代进度</h2>
               <span class="pill" id="iterationSummary">未运行</span>
             </div>
+            <details><summary>后台任务历史（刷新或重启后可查看）</summary><button class="btn secondary" id="refreshIterationHistory" type="button">刷新任务历史</button><div id="iterationJobHistory" class="mini-note">正在读取任务历史</div></details>
             <div class="progress-wrap">
               <div class="progress-label">
                 <span id="iterationJobTitle">等待启动</span
@@ -749,6 +771,7 @@
               ></div>
               <pre class="console" id="iterationConsole">等待自动迭代</pre>
             </div>
+            <div id="iterationSelection" class="mini-note"></div>
             <div class="scroll" style="margin-top: 14px">
               <table>
                 <thead>
@@ -907,13 +930,14 @@
               </div>
             </section>
             <section class="panel pad">
-              <h2>进化/终稿图</h2>
+              <h2>进化与协议比较图</h2>
               <div class="form-grid" style="margin-top: 12px">
                 <div>
-                  <label>进化数据</label
+                  <label>外部进化数据（可选）</label
                   ><input
                     id="evoData"
-                    value="Experiments/evolution_data_combined.json"
+                    value=""
+                    placeholder="项目场景将自动生成当前评价数据"
                   />
                 </div>
                 <div>
@@ -930,9 +954,7 @@
                 </div>
               </div>
               <div class="mini-note">
-                选择 single_peak/multi_peak 时读取历史 evolution JSON；选择
-                new、multi_mode 等真实项目场景时，后端会扫描该场景的 generation*
-                协议，先生成场景进化数据，再绘制进化图。终稿图会围绕左侧选中的协议来源场景做最终对比。
+                选择项目场景后自动评价各代协议，生成可追溯的进化数据；父代关系和修复次数只采用与源码匹配的候选记录，缺失时保留为空。比较图围绕左侧选择的协议来源场景生成。
               </div>
               <div class="actions">
                 <button class="btn blue" id="plotEvolution" type="button">

@@ -6,6 +6,7 @@ import json
 import math
 import random
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -74,7 +75,7 @@ def semantic_result(raw, tags, true_info, profile_id, *, relative_tolerance=.15,
 
 def validate_candidate(protocol_file, protocol_name, generator, *, task_profile="mode_query", scene="",
                        security_mode="strict", seed=0, total_runs=3, num_tags=120, price_min=1, price_max=1000,
-                       relative_tolerance=.15, absolute_tolerance=2., quantile=.5, timeout_seconds=15):
+                       relative_tolerance=.15, absolute_tolerance=2., quantile=.5, timeout_seconds=15, deadline=None):
     path = Path(protocol_file)
     get_profile(task_profile)
     try:
@@ -92,6 +93,10 @@ def validate_candidate(protocol_file, protocol_name, generator, *, task_profile=
     runtime_errors, metrics = [], []
     if static["passed"]:
         for index in range(total_runs):
+            remaining = deadline - time.monotonic() if deadline is not None else timeout_seconds
+            if remaining <= 0:
+                runtime_errors.append("evaluation_time_budget")
+                break
             current_seed = seed + index
             try:
                 tags, true_info = seeded_tags(generator, current_seed, num_tags, price_min, price_max)
@@ -99,9 +104,14 @@ def validate_candidate(protocol_file, protocol_name, generator, *, task_profile=
                 runtime_errors.append(f"dataset_generation_failed:{type(exc).__name__}")
                 break
             data_hash = hashlib.sha256(json.dumps([(t.id, t.price) for t in tags], separators=(",", ":")).encode()).hexdigest()
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    runtime_errors.append("evaluation_time_budget")
+                    break
             result = run_protocol_file(path, protocol_name, tags,
                 {"price_min": price_min, "price_max": price_max, "seed": current_seed, "tasks": ["legacy_mode_query"]},
-                timeout_seconds=timeout_seconds, security_mode=security_mode)["legacy_mode_query"]
+                timeout_seconds=min(timeout_seconds, remaining), security_mode=security_mode)["legacy_mode_query"]
             failure = result.failure_reason
             contract, hit, target, semantic_reason = semantic_result(result.estimate, tags, true_info or {}, task_profile,
                 relative_tolerance=relative_tolerance, absolute_tolerance=absolute_tolerance, quantile=quantile) if not failure else (False, False, [], "")
@@ -122,6 +132,8 @@ def validate_candidate(protocol_file, protocol_name, generator, *, task_profile=
                 "cost_status": result.metadata.get("cost_status", "missing")}
             sample["communication_counters"] = {name: getattr(result, name) for name in ("reader_bits", "tag_bits", "slots", "frames", "rounds")}
             sample["cost_origin"] = result.metadata.get("cost_origin", "unverified")
+            for key in ("channel_model_id", "cost_model", "communication_cost_ms", "communication_events"):
+                sample[key] = result.metadata.get(key)
             sample["measured_cpu_time_ms"] = result.metadata.get("measured_cpu_time_ms")
             sample["measured_wall_time_ms"] = result.metadata.get("measured_wall_time_ms")
             sample["source_sha256"] = result.metadata.get("source_sha256")
