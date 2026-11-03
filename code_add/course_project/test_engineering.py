@@ -225,7 +225,7 @@ class EngineeringServiceTests(unittest.TestCase):
 
     def test_config_job_uses_existing_runner_and_preserves_raw_artifacts(self):
         class ImmediateManager:
-            def submit(self, kind, payload, work):
+            def submit(self, kind, payload, work, *, on_skipped=None):
                 return {"kind": kind, "result": work(lambda **changes: None)}
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

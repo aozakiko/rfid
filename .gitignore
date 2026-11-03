@@ -32,3 +32,22 @@ Thumbs.db
 
 # Runtime logs
 *.log
+
+# Frontend dependencies, build and browser test outputs
+node_modules/
+code_add/course_project/frontend/dist/
+code_add/course_project/frontend/test-results/
+code_add/course_project/frontend/playwright-report/
+*.tsbuildinfo
+
+# Local experiment/task runs; tracked reference evidence remains versioned
+code_add/course_project/outputs/
+code_add/*/outputs/optimization_runs/
+code_add/Experiments/stat_protocols/config_runs/
+code_add/Experiments/stat_protocols/derived/
+code_add/Experiments/stat_protocols/latest.json
+code_add/Experiments/stat_protocols/pipeline_configs/
+code_add/Experiments/stat_protocols/pipelines/
+code_add/Experiments/stat_protocols/replays/
+code_add/Experiments/stat_protocols/runs/
+code_add/multi_mode/prompts/ai_mode_query_vue_browser_preview_*.txt

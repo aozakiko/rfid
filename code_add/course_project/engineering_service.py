@@ -30,40 +30,11 @@ def _artifacts(root):
              "kind": p.suffix.lstrip(".")} for p in sorted(root.rglob("*")) if p.is_file()]
 
 
-def _run(command, update, stage):
-    process = subprocess.Popen(command, cwd=ROOT, text=True, encoding="utf-8", errors="replace",
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8", "MPLBACKEND": "Agg"})
-    lines = queue.Queue(maxsize=200)
-    def read():
-        try:
-            for line in process.stdout:
-                lines.put(line[:4000])
-        finally:
-            lines.put(None)
-    reader = threading.Thread(target=read, daemon=True)
-    reader.start()
-    started = time.monotonic()
-    try:
-        while True:
-            if time.monotonic() - started > 1800:
-                raise TimeoutError(f"{stage} exceeded 1800 seconds")
-            try:
-                line = lines.get(timeout=1)
-            except queue.Empty:
-                continue
-            if line is None:
-                break
-            update(log=line.rstrip(), stage=stage)
-        process.wait(timeout=max(1, 1800 - (time.monotonic() - started)))
-        if process.returncode:
-            raise RuntimeError(f"{stage} failed with exit code {process.returncode}; see task log")
-    finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait()
-        reader.join(timeout=2)
-        process.stdout.close()
+def _run(command, update, stage, timeout=1800):
+    from course_project.task_process import run_process
+    result = run_process(command, cwd=ROOT, timeout=timeout, update=update, stage=stage, env={"MPLBACKEND": "Agg"})
+    if result["returncode"]:
+        raise RuntimeError(f"{stage} failed with exit code {result['returncode']}; see task log")
 
 
 def recorded_references():
@@ -146,7 +117,7 @@ def start_config(manager, payload):
         finally:
             SUITE_LOCK.release()
     try:
-        return manager.submit("statistics_config", config.to_dict(), work)
+        return manager.submit("statistics_config", config.to_dict(), work, on_skipped=SUITE_LOCK.release)
     except Exception:
         SUITE_LOCK.release()
         raise
@@ -173,7 +144,7 @@ def start_rebuild(manager, payload):
         finally:
             SUITE_LOCK.release()
     try:
-        return manager.submit("statistics_rebuild", {"run_id": run_id}, work)
+        return manager.submit("statistics_rebuild", {"run_id": run_id}, work, on_skipped=SUITE_LOCK.release)
     except Exception:
         SUITE_LOCK.release()
         raise
@@ -198,6 +169,8 @@ def pipeline_run(query=None):
 
 def start_pipeline(manager, payload):
     from benchmark.pipeline import seed_groups, audit_pipeline
+    from course_project.validation import bounded_int
+    timeout = bounded_int(payload, "max_seconds", 1800, 1, 3600)
     raw = payload.get("config")
     if not isinstance(raw, dict):
         raise ValueError("config must be a JSON object")
@@ -223,7 +196,7 @@ def start_pipeline(manager, payload):
             references = recorded_references()
             _run([sys.executable, "-u", "-m", "benchmark.pipeline", "--config", str(config_file), "--output-dir", str(folder),
                   "--validation-seeds", ",".join(map(str, validation)), "--blind-seeds", ",".join(map(str, blind))]
-                 + [v for p in references for v in ("--reference", str(p))], update, "pipeline")
+                 + [v for p in references for v in ("--reference", str(p))], update, "pipeline", timeout=timeout)
             audit = audit_pipeline(folder)
             if not audit["passed"]:
                 raise RuntimeError("pipeline artifact audit failed")
@@ -231,7 +204,7 @@ def start_pipeline(manager, payload):
         finally:
             SUITE_LOCK.release()
     try:
-        return manager.submit("statistics_pipeline", {"config": config.to_dict(), "validation_seeds": validation, "blind_seeds": blind}, work)
+        return manager.submit("statistics_pipeline", {"config": config.to_dict(), "validation_seeds": validation, "blind_seeds": blind}, work, on_skipped=SUITE_LOCK.release)
     except Exception:
         SUITE_LOCK.release()
         raise

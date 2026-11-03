@@ -45,7 +45,7 @@ class HTTPBoundaryTests(HTTPTestServer):
     def test_home_and_static_assets(self):
         status, headers, body = self.request("/")
         self.assertEqual(status, 200)
-        self.assertIn(b"/static/app.css", body)
+        self.assertTrue(b"/static/app.css" in body or b"/ui/assets/" in body)
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
         for path, content_type in (("app.css", "text/css"), ("app.js", "text/javascript")):
             status, headers, body = self.request(f"/static/{path}")

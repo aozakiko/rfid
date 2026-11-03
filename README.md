@@ -2,11 +2,13 @@
 
 RFID Lab 用于管理 RFID 场景和协议，通过大模型生成候选协议，再完成验证、迭代和实验分析。应用源代码位于 [`code_add/`](code_add/)，本文件是仓库首页的图文操作指南。
 
+2026-11-03：默认前端已升级为 **Vue 3 + TypeScript + Vite**。新版操作、构建和开发说明见 [前端说明](code_add/course_project/frontend/README.md)。下方截图和详细页面操作保留旧版工作台的记录，旧版可从 `/legacy` 打开。
+
 ![RFID Lab 平台总览](docs/screenshots/01-overview.png)
 
 ## 1. 下载与启动
 
-本次验证环境为 Windows、Python 3.13.5 和 Microsoft Edge。Web 服务、文件预览和模型 HTTP 客户端使用 Python 标准库；实验分析使用 NumPy、pandas 和 Matplotlib。前端无需 npm 构建。
+运行环境为 Windows、Python 和现代浏览器。Web 服务、文件预览和模型 HTTP 客户端使用 Python 标准库；实验分析使用 NumPy、pandas 和 Matplotlib。新版前端需 Node.js 20.19+ 或 22.12+ 构建，构建后由 Python 服务提供。
 
 首次下载，在 PowerShell 中执行：
 
@@ -17,6 +19,12 @@ Set-Location .\rfid
 # 在仓库根目录创建虚拟环境，不需要修改 PowerShell 的脚本执行策略。
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install numpy pandas matplotlib
+
+# 构建 Vue 前端，依赖和构建产物留在本机，不提交 Git。
+Set-Location .\code_add\course_project\frontend
+npm ci
+npm run build
+Set-Location ..\..\..
 
 # 启动命令需要在 code_add 目录运行。
 Set-Location .\code_add

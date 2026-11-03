@@ -13,7 +13,7 @@ import time
 from typing import Any, Callable
 from uuid import uuid4
 
-from course_project.http_support import APIError
+from course_project.http_support import APIError, error_details
 
 LOGGER = logging.getLogger(__name__)
 TERMINAL_STATES = {"success", "failed", "cancelled", "interrupted"}
@@ -81,7 +81,7 @@ class JobManager:
             except (ValueError, TypeError, KeyError, OSError):
                 LOGGER.exception("Cannot recover background job history")
 
-    def submit(self, kind: str, payload: dict[str, Any], work: Callable[[Callable[..., None]], Any]) -> dict[str, Any]:
+    def submit(self, kind: str, payload: dict[str, Any], work: Callable[[Callable[..., None]], Any], *, on_skipped=None) -> dict[str, Any]:
         if not self._capacity.acquire(blocking=False):
             raise APIError("后台队列已满，请等待已有任务完成后重试", HTTPStatus.SERVICE_UNAVAILABLE)
         job_id = uuid4().hex
@@ -97,10 +97,12 @@ class JobManager:
             self._persist()
 
         def run() -> None:
+            work_started = False
             try:
                 progress = JobProgress(self, job_id)
                 progress.check_cancelled()
                 self.update(job_id, status="running", stage="initializing", progress=3, log="正在读取配置与父代协议。")
+                work_started = True
                 result = work(progress)
                 if self.get(job_id).get("cancel_requested"):
                     self.update(job_id, status="cancelled", stage="cancelled", result=result, log="任务已停止，已完成的结果已保留。")
@@ -110,10 +112,15 @@ class JobManager:
                 self.update(job_id, status="cancelled", stage="cancelled", log="任务已在阶段边界停止。")
             except Exception as exc:
                 LOGGER.error("Background job %s failed", job_id, exc_info=True)
-                # Tracebacks stay in server logs. Client snapshots contain no credentials.
-                self.update(job_id, status="failed", stage="failed", progress=100, error="任务执行失败，请查看服务日志。", log="任务执行失败。")
+                detail = error_details(exc, stage=self.get(job_id).get("stage", "running"), request_id=job_id)
+                self.update(job_id, status="failed", stage="failed", progress=100,
+                    error=detail["message"], error_info=detail, log="任务失败：" + detail["code"])
             finally:
-                self._capacity.release()
+                try:
+                    if not work_started and on_skipped:
+                        on_skipped()
+                finally:
+                    self._capacity.release()
 
         try:
             self._executor.submit(run)
@@ -127,7 +134,7 @@ class JobManager:
     def update(self, job_id: str, **changes: Any) -> None:
         with self._lock:
             job = self._jobs[job_id]
-            for key in ("status", "stage", "result", "error"):
+            for key in ("status", "stage", "result", "error", "error_info"):
                 if key in changes and changes[key] is not None:
                     job[key] = changes[key]
             if changes.get("progress") is not None:

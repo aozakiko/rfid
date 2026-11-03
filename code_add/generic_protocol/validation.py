@@ -75,7 +75,8 @@ def semantic_result(raw, tags, true_info, profile_id, *, relative_tolerance=.15,
 
 def validate_candidate(protocol_file, protocol_name, generator, *, task_profile="mode_query", scene="",
                        security_mode="strict", seed=0, total_runs=3, num_tags=120, price_min=1, price_max=1000,
-                       relative_tolerance=.15, absolute_tolerance=2., quantile=.5, timeout_seconds=15, deadline=None):
+                       relative_tolerance=.15, absolute_tolerance=2., quantile=.5, timeout_seconds=15, deadline=None,
+                       cancel_check=None, on_run=None):
     path = Path(protocol_file)
     get_profile(task_profile)
     try:
@@ -93,6 +94,8 @@ def validate_candidate(protocol_file, protocol_name, generator, *, task_profile=
     runtime_errors, metrics = [], []
     if static["passed"]:
         for index in range(total_runs):
+            if cancel_check:
+                cancel_check()
             remaining = deadline - time.monotonic() if deadline is not None else timeout_seconds
             if remaining <= 0:
                 runtime_errors.append("evaluation_time_budget")
@@ -140,6 +143,10 @@ def validate_candidate(protocol_file, protocol_name, generator, *, task_profile=
             if sample["source_sha256"] and sample["source_sha256"] != source_hash:
                 reasons.append("source_changed_during_validation")
             runs.append(sample)
+            if on_run:
+                on_run(sample, index + 1, total_runs)
+            if cancel_check:
+                cancel_check()
             if len(samples) < 5:
                 samples.append(sample)
             if failure:

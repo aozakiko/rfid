@@ -24,6 +24,9 @@ COMPILE_FILES = (
     "generic_protocol/journal.py",
     "generic_protocol/validation_evidence.py",
     "course_project/engineering_service.py",
+    "course_project/frontend_assets.py",
+    "course_project/research_service.py",
+    "course_project/task_process.py",
     "course_project/candidate_evaluation.py",
     "course_project/optimization_control.py",
     "course_project/sensitivity.py",
@@ -59,12 +62,15 @@ COMPILE_FILES = (
 def _run(command: Sequence[str], *, timeout: int = 180) -> int:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONIOENCODING"] = "utf-8"
     try:
         result = subprocess.run(
             list(command),
             cwd=ROOT,
             env=env,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
         )

@@ -46,7 +46,8 @@ from course_project.selfopt_ui import INDEX_HTML as ADVANCED_INDEX_HTML
 from course_project.http_support import (
     APIError, json_response, text_response, read_json_body, send_bytes, request_error as _request_error,
 )
-from course_project.jobs import JobManager
+from course_project.jobs import JobManager, JobCancelled
+from course_project.frontend_assets import serve_frontend
 from course_project.validation import bounded_int as _coerce_int, bounded_float, boolean_value
 from course_project.assets import import_file, preview_file
 from course_project.candidate_evaluation import evaluate_protocol, select_population, feedback_for, save_json, independent_validation
@@ -54,6 +55,7 @@ from course_project.optimization_control import OptimizationControl, Optimizatio
 from generic_protocol.security import analyze_file
 from generic_protocol.subprocess_runner import run_protocol_file
 from generic_tasks import list_profiles
+from course_project.task_process import check_cancelled
 
 
 COURSE_ROOT = Path(__file__).resolve().parent
@@ -485,10 +487,15 @@ def start_background_task(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         def progress_logger(message, progress=None, stage=None):
             update(stage=stage, progress=progress, log=str(message))
         progress_logger.check_cancelled = update.check_cancelled
-        return workflows[kind](
-            payload,
-            progress_logger=progress_logger,
-        )
+        try:
+            return workflows[kind](payload, progress_logger=progress_logger)
+        except OptimizationStopped as exc:
+            if exc.reason == "cancelled":
+                raise JobCancelled("cancelled_by_user") from None
+            if exc.reason == "time_budget":
+                raise TimeoutError("model_generation_time_budget") from None
+            raise APIError("模型请求预算已用尽。", 409, code="model_request_budget", stage="generation",
+                suggestion="减少重试与修复轮数，或增加请求预算。") from None
 
     return JOB_MANAGER.submit(kind, payload, work)
 
@@ -653,7 +660,7 @@ def _load_scene_task(scene: str):
     return generate_tags, getattr(module, "SIMULATION_CONFIG", {})
 
 
-def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
+def validate_selfopt_protocol(payload: dict[str, Any], progress_logger=None) -> dict[str, Any]:
     from generic_protocol.validation import validate_candidate
     from generic_tasks import get_profile
 
@@ -663,21 +670,51 @@ def validate_selfopt_protocol(payload: dict[str, Any]) -> dict[str, Any]:
     mode = str(payload.get("security_mode") or "legacy").strip().lower()
     if mode not in {"strict", "legacy"}:
         raise ValueError("security_mode 必须是 strict 或 legacy")
-    path = _find_protocol_file(scene, protocol, include_base=True)
+    if payload.get("candidate_id"):
+        from course_project.research_service import candidate
+        registered = candidate(payload["candidate_id"])
+        if registered["family"] != "python" or registered["scene"] != scene or registered["task_profile"] != profile:
+            raise ValueError("候选类型、场景或任务与本次验证不一致")
+        path = _resolve_project_path(registered["snapshot_path"])
+        protocol = registered["name"]
+    else:
+        path = _find_protocol_file(scene, protocol, include_base=True)
     generator, config = _load_scene_task(scene)
     price_min = _coerce_int(payload, "price_min", int(config.get("PRICE_MIN", 1)), 1, 100000)
     price_max = _coerce_int(payload, "price_max", int(config.get("PRICE_MAX", 1000)), price_min + 1, 1000000)
+    partial_rows = []
+    partial_path = COURSE_ROOT / "outputs" / "validation_tasks" / (uuid4().hex + ".json")
+    def record_run(sample, done, total):
+        partial_rows.append(sample)
+        save_json(partial_path, {"partial": True, "protocol": protocol, "scene": scene, "runs": partial_rows,
+            "completed_runs": done, "total_runs": total})
+        progress_logger(stage="validation", progress=int(done/total*95), log=f"验证 {done}/{total}: Seed {sample['seed']}",
+            result={"partial": True, "protocol": protocol, "completed_runs": done, "evidence_path": _relative_to_project(partial_path)})
     result = validate_candidate(path, protocol, generator, scene=scene, task_profile=profile,
         security_mode=mode, seed=_coerce_int(payload, "seed", 0, 0, 2**31 - 201),
         num_tags=_coerce_int(payload, "num_tags", 120, 20, 200000),
         total_runs=_coerce_int(payload, "total_runs", 3, 1, 200), price_min=price_min, price_max=price_max,
         relative_tolerance=bounded_float(payload, "relative_tolerance", .15, 0., 1.),
         absolute_tolerance=bounded_float(payload, "absolute_tolerance", 2., 0., 1e12),
-        quantile=bounded_float(payload, "quantile", .5, 0., 1.))
+        quantile=bounded_float(payload, "quantile", .5, 0., 1.),
+        cancel_check=lambda: check_cancelled(progress_logger),
+        on_run=record_run if progress_logger else None)
     result["task_title"] = TASK_GUIDANCE.get(profile, {}).get("title", get_profile(profile).title)
     result["custom_task_text"] = str(payload.get("custom_task_text") or "").strip() if profile == CUSTOM_TASK_PROFILE else ""
     result["protocol_path"] = _relative_to_project(path)
+    if payload.get("candidate_id"):
+        result["candidate_id"] = payload["candidate_id"]
+    elif profile in {"mode_query", "mean_estimation", "variance_estimation", "median_quantile", "cardinality_estimation", "top_k"} and hashlib.sha256(path.read_bytes()).hexdigest() == result["source_sha256"]:
+        from course_project.research_service import register
+        result["candidate_id"] = register({"path": str(path), "scene": scene, "task_profile": profile,
+            "expected_sha256": result["source_sha256"]})["id"]
+    if result.get("candidate_id"):
+        from course_project.research_service import record_validation_usage
+        record_validation_usage(result["candidate_id"], result)
     result["validation_report_id"] = store_validation_report(result)
+    if progress_logger:
+        result["evidence_path"] = _relative_to_project(partial_path)
+        save_json(partial_path, result)
     return result
 
 
@@ -723,6 +760,7 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
     logs: list[str] = []
 
     def emit(message: str, progress: int | None = None, stage: str | None = None) -> None:
+        check_cancelled(progress_logger)
         logs.append(message)
         if progress_logger:
             progress_logger(message, progress=progress, stage=stage)
@@ -750,6 +788,8 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
             return 88, "repairing"
         return None, "running_model"
 
+    single_control = OptimizationControl(max_requests=100, max_seconds=_coerce_int(payload, "max_wall_seconds", 3600, 1, 86400),
+        cancel_check=getattr(progress_logger, "check_cancelled", None))
     result = run_ai_optimization_workflow(
         scene_name=scene,
         parent_a=parent_a,
@@ -772,10 +812,15 @@ def run_ai_generation(payload: dict[str, Any], progress_logger=None) -> dict[str
             progress=workflow_progress(str(message))[0],
             stage=workflow_progress(str(message))[1],
         ),
+        **({"request_guard": single_control.before_request, "evaluation_deadline": single_control.started + single_control.max_seconds} if progress_logger and not dry_run else {}),
     )
     emit(f"AI 任务返回状态: {result.get('status')}", progress=96, stage="persisting")
     result["task_profile"] = task_profile
     result["task_title"] = task_guidance(task_profile, custom_task_text)["title"]
+    if not dry_run and result.get("target_file") and Path(result["target_file"]).is_file():
+        from course_project.research_service import register_generated
+        registered = register_generated(result["target_file"], scene, task_profile, report=result.get("validation"))
+        result["candidate_id"] = registered["id"]
     request = {
         "scene": scene,
         "parent_a": parent_a,
@@ -854,13 +899,15 @@ def run_selfopt_batch_test(payload: dict[str, Any], progress_logger=None) -> dic
     started = time.perf_counter()
     evaluations = {}
     for name in names:
+        check_cancelled(progress_logger)
         if progress_logger:
             progress_logger(log=f"统一评价 {name}", stage="evaluation", progress=int(len(evaluations) / len(names) * 90))
         if time.perf_counter() - started >= timeout:
             raise TimeoutError("批量评价已达到总时间预算")
         remaining = timeout - (time.perf_counter() - started)
         evaluations[name] = evaluate_protocol(_find_protocol_file(scene, name), name, generator,
-            {**config, "timeout_seconds": min(config["timeout_seconds"], remaining / total_runs)})
+            {**config, "timeout_seconds": min(config["timeout_seconds"], remaining / total_runs),
+             "cancel_check": lambda: check_cancelled(progress_logger)})
     folder = _scene_path(scene) / "outputs" / "candidate_comparisons" / uuid4().hex
     identities = {tuple(item["summary"]["dataset_hashes"]) for item in evaluations.values()
                   if item["summary"]["selection_eligible"]}
@@ -1228,6 +1275,9 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             stop_reason = "no_improvement"
             break
     if run_record is not None:
+        # Freeze a winner even when the optional immediate holdout is disabled.
+        winner = select_population(population, evaluations, 1, objective=objective, minimum_pass_rate=minimum_pass_rate)[0]
+        run_record.update(winner=winner, baseline=baseline_name)
         if independent_enabled:
             try:
                 control.check()
@@ -1253,9 +1303,22 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             stop_reason=stop_reason, budget=control.snapshot(), independent_validation=holdout_result,
             unranked_parents=[name for name in population if not evaluations[name]["summary"]["selection_eligible"]])
         save_json(evidence_dir / "run.json", run_record)
+    registered_winner = registered_baseline = None
+    if run_record is not None and run_record.get("winner"):
+        from course_project.research_service import register_generated
+        # Use the evaluated source snapshots, never a later same-name edit.
+        for label, name in (("winner", run_record["winner"]), ("baseline", baseline_name)):
+            original = _find_protocol_file(scene, name)
+            frozen_bytes = (evidence_dir / (name + ".source.txt")).read_bytes()
+            if original.read_bytes() != frozen_bytes:
+                continue
+            registered = register_generated(original, scene, task_profile, evidence=_relative_to_project(evidence_dir / "run.json"))
+            if label == "winner": registered_winner = registered["id"]
+            else: registered_baseline = registered["id"]
     return {
         "scene": scene,
         "parents": parents,
+        "winner_candidate_id": registered_winner, "baseline_candidate_id": registered_baseline,
         "prefix": prefix,
         "dry_run": dry_run,
         "task_profile": task_profile,
@@ -1307,11 +1370,14 @@ def _protocol_metrics_for_scene(
     num_tags: int,
     total_runs: int = 2,
     protocol_file: Path | None = None,
+    progress_logger=None,
+    deadline=None,
 ) -> dict[str, Any]:
     generator, _ = _load_scene_task(scene)
     item = evaluate_protocol(protocol_file or _find_protocol_file(scene, protocol), protocol, generator,
         {"scene": scene, "task_profile": task_profile, "security_mode": "strict", "seed": 1000,
-         "num_tags": num_tags, "total_runs": total_runs, "relative_tolerance": .2})
+         "num_tags": num_tags, "total_runs": total_runs, "relative_tolerance": .2,
+         "cancel_check": lambda: check_cancelled(progress_logger)}, deadline=deadline)
     result = item["validation"]
     return {
         "accuracy": item["summary"]["quality_pass_rate"],
@@ -1326,7 +1392,7 @@ def _protocol_metrics_for_scene(
     }
 
 
-def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Path, str]:
+def _scene_evolution_data_path(scene: str, payload: dict[str, Any], progress_logger=None, deadline=None) -> tuple[Path, str]:
     scene_name = _validate_scene(scene)
     task_profile = str(payload.get("task_profile") or "mode_query")
     custom_task_text = str(payload.get("custom_task_text") or "").strip()
@@ -1351,6 +1417,9 @@ def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Pat
         protocol_files = sorted([p for p in generation_dir.glob("*.py") if p.stem != "__init__"], key=lambda p: p.stem)
         rows: list[dict[str, Any]] = []
         for file_path in protocol_files:
+            check_cancelled(progress_logger)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("experiment_preparation_time_budget")
             try:
                 metrics = _protocol_metrics_for_scene(
                     scene_name,
@@ -1360,13 +1429,18 @@ def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Pat
                     num_tags=num_tags,
                     total_runs=total_runs,
                     protocol_file=file_path,
+                    progress_logger=progress_logger, deadline=deadline,
                 )
+            except (JobCancelled, TimeoutError):
+                raise
             except Exception as exc:
                 rows.append({"name": file_path.stem, "generation": gen_index,
                     "parent_A": None, "parent_B": None, "correction_count": None,
                     "accuracy": None, "time": None, "quality_score": None,
                     "provenance_status": "unavailable", "error_type": type(exc).__name__})
                 continue
+            if progress_logger:
+                progress_logger(stage="preparing", log=f"已评测 {generation_dir.name}/{file_path.stem}")
             provenance = {}
             record_path = file_path.with_suffix(".candidate.json")
             if record_path.is_file():
@@ -1415,7 +1489,7 @@ def _scene_evolution_data_path(scene: str, payload: dict[str, Any]) -> tuple[Pat
     return data_path, scene_name
 
 
-def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
+def _final_comparison_csv_path(scene: str, payload: dict[str, Any], progress_logger=None, deadline=None) -> Path:
     scene_name = _validate_scene(scene)
     task_profile = str(payload.get("task_profile") or "mode_query")
     custom_task_text = str(payload.get("custom_task_text") or "").strip()
@@ -1434,6 +1508,9 @@ def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
     for name in candidate_names:
         if not name or name in seen:
             continue
+        check_cancelled(progress_logger)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("experiment_preparation_time_budget")
         seen.add(name)
         try:
             metrics = _protocol_metrics_for_scene(
@@ -1443,13 +1520,18 @@ def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
                 custom_task_text=custom_task_text,
                 num_tags=num_tags,
                 total_runs=total_runs,
+                progress_logger=progress_logger, deadline=deadline,
             )
+        except (JobCancelled, TimeoutError):
+            raise
         except Exception as exc:
             metrics = {"accuracy": None, "time": None, "timing_scope": "worker_measured_wall_excluding_startup_not_RF",
                 "quality_score": None, "communication_cost_ms": None, "source_sha256": None,
                 "final_decision": "failed:" + type(exc).__name__, "validator_passed": False,
                 "information_isolation_passed": False}
         rows.append({"protocol_name": name, **metrics})
+        if progress_logger:
+            progress_logger(stage="preparing", log=f"已评测 {len(rows)}/{len(set(candidate_names))}: {name}")
     if not rows:
         raise ValueError(f"场景 {scene_name} 没有可执行协议，无法生成终稿图")
     import csv
@@ -1464,7 +1546,10 @@ def _final_comparison_csv_path(scene: str, payload: dict[str, Any]) -> Path:
     return csv_path
 
 
-def _run_command(command: list[str], *, timeout: int = 600, env_overrides: dict[str, str] | None = None) -> dict[str, Any]:
+def _run_command(command: list[str], *, timeout: int = 600, env_overrides: dict[str, str] | None = None, progress_logger=None) -> dict[str, Any]:
+    if progress_logger:
+        from course_project.task_process import run_process
+        return run_process(command, cwd=PROJECT_ROOT, timeout=timeout, update=progress_logger, env=env_overrides)
     started = time.perf_counter()
     completed = subprocess.run(
         command,
@@ -1485,12 +1570,14 @@ def _run_command(command: list[str], *, timeout: int = 600, env_overrides: dict[
     }
 
 
-def run_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
+def run_experiment_task(payload: dict[str, Any], progress_logger=None) -> dict[str, Any]:
+    check_cancelled(progress_logger)
     task = str(payload.get("task") or "robust").strip()
     task_profile = str(payload.get("task_profile") or "mode_query").strip()
     custom_task_text = str(payload.get("custom_task_text") or "").strip()
     validate_task_profile(task_profile, custom_task_text)
     timeout = _coerce_int(payload, "timeout_seconds", 600, 30, 7200)
+    deadline = time.monotonic() + timeout
     env = {"MPLBACKEND": "Agg"}
     if task == "robust":
         protocols = str(payload.get("protocols") or "g10_4:single_mode,g8_3:multi_mode").strip()
@@ -1540,7 +1627,7 @@ def run_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
     elif task == "plot_evolution":
         scenario = str(payload.get("scenario") or discover_scenes()[0])
         if scenario in discover_scenes():
-            data_file, scenario = _scene_evolution_data_path(scenario, payload)
+            data_file, scenario = _scene_evolution_data_path(scenario, payload, **({"progress_logger": progress_logger, "deadline": deadline} if progress_logger else {}))
             data_path = _relative_to_project(data_file)
         else:
             if not payload.get("data"):
@@ -1567,7 +1654,7 @@ def run_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
             protocol_spec = str(payload.get("protocols") or "")
             source_scene = protocol_spec.split(":", 1)[1] if ":" in protocol_spec else build_catalog()["defaults"]["scene"]
         source_scene = _validate_scene(source_scene)
-        csv_path = _final_comparison_csv_path(source_scene, payload)
+        csv_path = _final_comparison_csv_path(source_scene, payload, **({"progress_logger": progress_logger, "deadline": deadline} if progress_logger else {}))
         output_dir = _safe_experiment_path(str(payload.get("output_dir") or "Experiments"), default_name="Experiments")
         command = [
             sys.executable,
@@ -1584,7 +1671,14 @@ def run_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         raise ValueError(f"未知实验任务: {task}")
 
-    result = _run_command(command, timeout=timeout, env_overrides=env)
+    check_cancelled(progress_logger)
+    remaining = deadline - time.monotonic()
+    if progress_logger and remaining <= 0:
+        raise TimeoutError("experiment_time_budget")
+    result = _run_command(command, timeout=remaining if progress_logger else timeout, env_overrides=env, **({"progress_logger": progress_logger} if progress_logger else {}))
+    if progress_logger and result["returncode"]:
+        raise APIError("实验脚本执行失败，请查看任务日志。", 500, code="experiment_failed", stage="experiment",
+            suggestion="检查任务、协议与输入数据是否兼容，核对日志中的脚本错误。")
     return result | {
         "task": task,
         "task_profile": task_profile,
@@ -1644,7 +1738,9 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
         try:
-            if path == "/":
+            if serve_frontend(self, path):
+                return
+            if path in {"/", "/legacy"}:
                 text_response(self, ADVANCED_INDEX_HTML)
             elif path.startswith("/static/") and path.removeprefix("/static/") in STATIC_FILES:
                 name = path.removeprefix("/static/")
@@ -1653,6 +1749,15 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, {"ok": True, "project_root": str(PROJECT_ROOT)})
             elif path == "/api/selfopt/state":
                 json_response(self, selfopt_state())
+            elif path == "/api/research/capabilities":
+                from course_project.research_service import capabilities
+                json_response(self, capabilities())
+            elif path == "/api/research/candidates":
+                from course_project.research_service import list_candidates
+                json_response(self, list_candidates(query))
+            elif path == "/api/research/runs":
+                from course_project.research_service import runs
+                json_response(self, runs(query))
             elif path == "/api/selfopt/artifacts":
                 json_response(self, {"artifacts": _experiment_artifact_rows(), "outputs": _output_artifact_rows()})
             elif path == "/api/statistics/benchmark":
@@ -1717,7 +1822,17 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, result, HTTPStatus.CREATED)
                 return
             payload = read_json_body(self)
-            if path == "/api/statistics/run-config":
+            if path == "/api/research/register":
+                from course_project.research_service import register
+                if not payload.get("path") and payload.get("family", "python") == "python":
+                    scene = _validate_scene(str(payload.get("scene") or ""))
+                    protocol = _validate_identifier(str(payload.get("protocol") or ""), "协议名称")
+                    payload = {**payload, "path": str(_find_protocol_file(scene, protocol))}
+                json_response(self, {"candidate": register(payload)}, HTTPStatus.CREATED)
+            elif path == "/api/research/evaluate-async":
+                from course_project.research_service import start_evaluation
+                json_response(self, {"job": start_evaluation(JOB_MANAGER, payload)}, HTTPStatus.ACCEPTED)
+            elif path == "/api/statistics/run-config":
                 from course_project.engineering_service import start_config
                 json_response(self, {"job": start_config(JOB_MANAGER, payload)}, HTTPStatus.ACCEPTED)
             elif path == "/api/statistics/run-pipeline":
@@ -1732,10 +1847,20 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/statistics/generate-baseline":
                 from course_project.statistics_service import generate_baseline
                 config = _web_llm_config(payload)
-                json_response(self, {"job": JOB_MANAGER.submit("statistics_llm", {}, lambda update: generate_baseline(config))}, HTTPStatus.ACCEPTED)
+                def work(update):
+                    check_cancelled(update)
+                    result = generate_baseline(config)
+                    if result.get("valid"):
+                        from course_project.research_service import register
+                        result["registry_id"] = register({"family": "statistics", "path": result["path"]})["id"]
+                    return result
+                json_response(self, {"job": JOB_MANAGER.submit("statistics_llm", payload, work)}, HTTPStatus.ACCEPTED)
             elif path == "/api/statistics/import-candidate":
                 from course_project.statistics_service import save_candidate
-                json_response(self, save_candidate(payload.get("record")), HTTPStatus.CREATED)
+                from course_project.research_service import register
+                result = save_candidate(payload.get("record"))
+                result["registry_id"] = register({"family": "statistics", "path": result["path"]})["id"]
+                json_response(self, result, HTTPStatus.CREATED)
             elif path == "/api/selfopt/file":
                 json_response(self, save_project_file(payload))
             elif path == "/api/selfopt/scene":
@@ -1751,6 +1876,9 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, probe_ai_runtime(payload))
             elif path == "/api/selfopt/validate":
                 json_response(self, validate_selfopt_protocol(payload))
+            elif path == "/api/selfopt/validate-async":
+                json_response(self, {"job": JOB_MANAGER.submit("protocol_validation", payload,
+                    lambda update: validate_selfopt_protocol(payload, update))}, HTTPStatus.ACCEPTED)
             elif path == "/api/selfopt/baseline-copy":
                 result = copy_baseline_to_scene(payload)
                 json_response(self, result | {"state": selfopt_state()})
@@ -1769,6 +1897,9 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, {"job": retry_background_task(payload)}, HTTPStatus.ACCEPTED)
             elif path == "/api/selfopt/experiments":
                 json_response(self, run_experiment_task(payload))
+            elif path == "/api/selfopt/experiments-async":
+                json_response(self, {"job": JOB_MANAGER.submit("scene_experiment", payload,
+                    lambda update: run_experiment_task(payload, update))}, HTTPStatus.ACCEPTED)
             else:
                 json_response(self, {"error": f"unknown path: {path}"}, HTTPStatus.NOT_FOUND)
         except Exception as exc:

@@ -239,39 +239,20 @@ def start_suite(manager, payload):
     def work(update):
         try:
             update(log="统计基准在独立子进程中运行，超时 30 分钟。", stage="benchmark", progress=5)
-            logs = []
-            timed_out = threading.Event()
-            with subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace") as process:
-                def terminate_timeout():
-                    timed_out.set()
-                    process.kill()
-                timer = threading.Timer(1800, terminate_timeout)
-                timer.daemon = True
-                timer.start()
-                try:
-                    stage_count = 0
-                    for line in process.stdout:
-                        logs.append(line.rstrip())
-                        if line.startswith("Running "):
-                            stage_count += 1
-                        update(log=line.rstrip(), progress=min(90, 5 + stage_count * 12), stage="benchmark")
-                    returncode = process.wait()
-                finally:
-                    timer.cancel()
-            if timed_out.is_set():
-                raise RuntimeError("statistics suite exceeded 30 minute timeout")
-            if returncode:
+            from course_project.task_process import run_process
+            result = run_process(command, cwd=ROOT, timeout=1800, update=update, stage="benchmark")
+            if result["returncode"]:
                 raise RuntimeError("statistics suite failed; details in the task log")
             # Publish only after the full suite/report is successful.
             pointer = EXPERIMENT_ROOT / "latest.json"
             temporary = pointer.with_suffix(".tmp")
             temporary.write_text(json.dumps({"root": _relative(output)}, ensure_ascii=False), encoding="utf-8")
             temporary.replace(pointer)
-            return {"root": _relative(output), "command": command, "stdout": "\n".join(logs)}
+            return {"root": _relative(output), "command": command, "stdout": result["stdout"]}
         finally:
             SUITE_LOCK.release()
     try:
-        return manager.submit("statistics_suite", {"seed_count": seed_count, "sizes": sizes, "candidate_id": candidate_id}, work)
+        return manager.submit("statistics_suite", {"seed_count": seed_count, "sizes": sizes, "candidate_id": candidate_id}, work, on_skipped=SUITE_LOCK.release)
     except Exception:
         SUITE_LOCK.release()
         raise

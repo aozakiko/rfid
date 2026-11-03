@@ -1,0 +1,91 @@
+import { createRouter, createWebHashHistory } from 'vue-router'
+
+export const pages = [
+  {
+    path: '/',
+    name: 'overview',
+    title: '研究总览',
+    subtitle: '从任务需求到协议演化，查看平台研究进展。',
+    mark: '01',
+    component: () => import('./views/OverviewView.vue'),
+  },
+  {
+    path: '/assets',
+    name: 'assets',
+    title: '场景与代码',
+    subtitle: '管理场景生成器、协议基线、世代源码和 Prompt。',
+    mark: '02',
+    component: () => import('./views/AssetsView.vue'),
+  },
+  {
+    path: '/design',
+    name: 'design',
+    title: '协议设计',
+    subtitle: '配置模型与任务，通过交叉、生成和修复探索候选协议。',
+    mark: '03',
+    component: () => import('./views/DesignView.vue'),
+  },
+  {
+    path: '/validation',
+    name: 'validation',
+    title: '验证沙箱',
+    subtitle: '核对执行、隔离、物理约束和完整任务语义。',
+    mark: '04',
+    component: () => import('./views/ValidationView.vue'),
+  },
+  {
+    path: '/optimization',
+    name: 'optimization',
+    title: '自动迭代',
+    subtitle: '在精度约束下搜索通信成本，并独立验证冻结候选。',
+    mark: '05',
+    component: () => import('./views/OptimizationView.vue'),
+  },
+  {
+    path: '/experiments',
+    name: 'experiments',
+    title: '实验分析',
+    subtitle: '配置可复现实验、敏感度分析和演化图表。',
+    mark: '06',
+    component: () => import('./views/ExperimentsView.vue'),
+  },
+  {
+    path: '/statistics',
+    name: 'statistics',
+    title: '统计基准',
+    subtitle: '筛选场景、比较通信与误差，核对 Pareto 和逐次证据。',
+    mark: '07',
+    component: () => import('./views/StatisticsView.vue'),
+  },
+  {
+    path: '/artifacts',
+    name: 'artifacts',
+    title: '实验产物',
+    subtitle: '预览、检索和下载原始结果、报告与图表。',
+    mark: '08',
+    component: () => import('./views/ArtifactsView.vue'),
+  },
+  {
+    path: '/audit',
+    name: 'audit',
+    title: '运行审计',
+    subtitle: '追踪后台任务、历史验证和候选来源。',
+    mark: '09',
+    component: () => import('./views/AuditView.vue'),
+  },
+  {
+    path: '/research',
+    name: 'research',
+    title: '候选评测',
+    subtitle: '冻结版本，比较跨分布、规模与扰动下的验证和盲测表现。',
+    mark: '10',
+    component: () => import('./views/ResearchView.vue'),
+  },
+]
+export const router = createRouter({
+  history: createWebHashHistory(),
+  routes: [
+    ...pages.map((page) => ({ ...page, meta: { title: page.title, subtitle: page.subtitle } })),
+    { path: '/:pathMatch(.*)*', redirect: '/' },
+  ],
+})

@@ -15,6 +15,7 @@ from ai_protocol_optimizer import _parent_evidence
 from benchmark.provenance import audit_manifest
 from benchmark.run_config import run_config
 from course_project import web_app
+from course_project import research_service
 from course_project.candidate_evaluation import evaluate_protocol, select_population
 from course_project.test_run_config import config_payload
 from course_project.jobs import JobManager
@@ -45,6 +46,9 @@ class PlatformIterationTests(unittest.TestCase):
             p = patch.object(web_app, target, value)
             p.start()
             self.addCleanup(p.stop)
+        p = patch.object(research_service, "ROOT", self.root)
+        p.start()
+        self.addCleanup(p.stop)
 
     def payload(self, **updates):
         return {"scene": "fixture", "parents": ["PoorA", "PoorB"],

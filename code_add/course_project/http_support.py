@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from uuid import uuid4
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from typing import Any
@@ -12,9 +13,29 @@ MAX_REQUEST_BYTES = 2_000_000
 
 
 class APIError(Exception):
-    def __init__(self, message: str, status: int = HTTPStatus.BAD_REQUEST):
+    def __init__(self, message: str, status: int = HTTPStatus.BAD_REQUEST, *, code=None, stage=None, suggestion=None):
         super().__init__(message)
         self.status = status
+        self.code, self.stage, self.suggestion = code, stage, suggestion
+
+
+def error_details(exc, *, stage="request", request_id=None):
+    """Public, credential-free error contract shared by HTTP and background jobs."""
+    if isinstance(exc, TimeoutError):
+        code, message, hint, retryable = "timeout", "运行超过时间预算。", "减少场景或重复次数，或增加时间预算后重试。", True
+    elif isinstance(exc, APIError):
+        code = exc.code or ("conflict" if exc.status == 409 else "invalid_request" if exc.status < 500 else "service_unavailable")
+        message, hint, retryable = str(exc), exc.suggestion or "核对配置和当前运行状态后重试。", exc.status >= 500 or exc.status == 409
+    elif isinstance(exc, ValueError):
+        code, message, hint, retryable = "invalid_configuration", str(exc), "核对任务、协议能力和参数范围。", False
+    elif isinstance(exc, (FileNotFoundError, KeyError)):
+        code, message, hint, retryable = "resource_not_found", "所需候选或实验文件不存在。", "刷新候选列表，核对版本和运行记录。", False
+    elif isinstance(exc, PermissionError):
+        code, message, hint, retryable = "access_denied", "文件不可访问。", "使用项目内允许的资产路径。", False
+    else:
+        code, message, hint, retryable = "execution_failed", "任务执行失败。", "查看任务阶段和日志，凭错误编号定位服务日志。", True
+    return {"code": code, "stage": getattr(exc, "stage", None) or stage, "message": message,
+            "suggestion": hint, "retryable": retryable, "request_id": request_id or uuid4().hex[:12]}
 
 
 def send_bytes(
@@ -100,4 +121,6 @@ def request_error(handler: BaseHTTPRequestHandler, exc: Exception) -> None:
     else:
         status, message = HTTPStatus.INTERNAL_SERVER_ERROR, "服务器内部错误，请查看服务日志"
         LOGGER.error("Unhandled request error", exc_info=(type(exc), exc, exc.__traceback__))
-    json_response(handler, {"error": message}, status)
+    detail = error_details(exc)
+    LOGGER.warning("Request %s failed: %s", detail["request_id"], detail["code"])
+    json_response(handler, {"error": message, "error_info": detail, "schema_version": "1.1"}, status)
