@@ -17,6 +17,7 @@ test('all Vue routes load against the real backend without browser exceptions', 
     ['artifacts', '实验产物'],
     ['audit', '运行审计'],
     ['research', '候选评测'],
+    ['workspaces', '研究任务'],
   ]) {
     await page.goto('/#/' + path)
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()

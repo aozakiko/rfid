@@ -12,6 +12,7 @@ import AssetPreview from '../components/AssetPreview.vue'
 import StatusTag from '../components/StatusTag.vue'
 import CandidateActions from '../components/CandidateActions.vue'
 import MetricChart from '../components/MetricChart.vue'
+import SelectionEvidence from '../components/SelectionEvidence.vue'
 const platform = usePlatform(),
   jobs = useJobs()
 const form = reactive({
@@ -160,7 +161,9 @@ function selectHistory(previousId: string) {
               label="精度达标后降低模拟通信成本"
               value="precision_constrained_cost" /><el-option
               label="仅按任务质量选择"
-              value="quality_only" /></el-select
+              value="quality_only" /><el-option
+              label="Pareto 前沿与种群多样性"
+              value="pareto_diversity" /></el-select
         ></el-form-item>
         <el-form-item label="最低语义通过率"
           ><el-input-number
@@ -289,7 +292,9 @@ function selectHistory(previousId: string) {
         停止原因：{{ statusLabel(result.stop_reason) }}；选择目标：{{
           result.selection_mode === 'precision_constrained_cost'
             ? '精度达标后降低模拟通信成本'
-            : '任务质量探索'
+            : result.selection_mode === 'pareto_diversity'
+              ? 'Pareto 前沿与种群多样性'
+              : '任务质量探索'
         }}。
       </p>
       <p v-if="result.independent_validation">
@@ -304,6 +309,17 @@ function selectHistory(previousId: string) {
           result.baseline_candidate_id ? String(result.baseline_candidate_id) : undefined
         "
       />
+      <SelectionEvidence v-if="result.final_selection" :report="result.final_selection" />
+      <el-collapse
+        ><el-collapse-item
+          v-for="round in result.iterations.filter((item) => item.selection_details)"
+          :key="round.iteration"
+          :title="'第 ' + round.iteration + ' 轮选择证据'"
+          :name="round.iteration"
+          ><SelectionEvidence
+            v-if="round.selection_details"
+            :report="round.selection_details" /></el-collapse-item
+      ></el-collapse>
       <MetricChart
         :labels="result.iterations.map((row) => '第 ' + row.iteration + ' 轮')"
         :series="trend"

@@ -27,6 +27,16 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 describe('background work', () => {
+  it('uses a durable terminal workspace snapshot without requesting pruned history', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const jobs = useJobs()
+    jobs.records[base.id] = { ...base, status: 'success' }
+    jobs.watch(base.id)
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(jobs.records[base.id].status).toBe('success')
+  })
   it('recovers after a transient network failure and stops polling cancelled work', async () => {
     const fetch = vi
       .fn()

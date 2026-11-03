@@ -31,8 +31,8 @@ const metrics = computed(() => [
         >
       </div>
     </div>
-    <RouterLink to="/optimization"
-      ><el-button type="primary" size="large">进入自动迭代 ↗</el-button></RouterLink
+    <RouterLink to="/workspaces"
+      ><el-button type="primary" size="large">创建研究任务 ↗</el-button></RouterLink
     >
   </section>
   <div class="metric-grid">

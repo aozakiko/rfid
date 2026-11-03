@@ -38,6 +38,7 @@ def capabilities():
                        "engine": "statistical_operator_benchmark", "cost_model": "statistics_histogram"}},
         "distributions": sorted(SUPPORTED_DISTRIBUTIONS), "splits": ["validation", "blind"],
         "limits": {"candidates": 6, "cases": 240, "seeds_per_split": 10, "max_seconds": 3600},
+        "selection_objectives": ["quality_only", "precision_constrained_cost", "pareto_diversity"],
         "comparison_rule": "same task, input hashes, split, scenario and measured channel model only"}
 
 

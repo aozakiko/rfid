@@ -54,6 +54,7 @@ http://127.0.0.1:8765
 
 ## Web 页面
 
+- 研究任务：统一保存任务目标、预设基线、模型元信息和评测计划；配置版本绑定初始源码摘要，串联演化、冻结候选验证、独立评测与运行证据。入口 `/#/workspaces`，每次操作使用独立运行 ID。
 - 总览：项目概况、工作流导航、场景资产统计和世代分布；支持桌面和移动布局。
 - 场景与代码：管理 `Task/config`、`generation`、`prompts`、`base_protocol` 资产，提供文件搜索、未保存提示及 Ctrl/⌘ + S 保存。
 - 协议设计：单次协议生成页，只选择父代 A/B；支持任务画像、可选自然语言约束、模型探测、异步进度、Prompt 预览和协议代码生成。
@@ -95,7 +96,9 @@ API Key 仅随请求提交，后台任务公开快照会剔除密钥，密钥不
 
 2026-11-03 新增后台任务历史、停止与重试：GET /api/selfopt/jobs；POST /api/selfopt/job/cancel（id）；POST /api/selfopt/job/retry（id 与当前模型配置）。任务历史持久化，重启后的未完成任务标记为 interrupted，重试使用新名称重新运行。
 
-自动迭代可选择 selection_objective=precision_constrained_cost，按 minimum_pass_rate 约束选择平台计量的模拟通信成本；兼容 quality_only 质量探索。independent_validation 默认启用，搜索后冻结赢家与初始基线，检查验证数据重叠。可配置 max_model_requests、max_wall_seconds、no_improvement_rounds 和 target_communication_cost_ms，记录实际消耗及停止原因。
+自动迭代支持三种 selection_objective：quality_only 质量探索、precision_constrained_cost 精度达标后降低通信成本，以及 pareto_diversity。Pareto 模式对通过率、质量与平台计量成本做非支配分层，以归一化拥挤度保留多样性，去除仅改名、注释或格式的源码结构重复；记录每轮选择原因。independent_validation 默认启用，搜索后冻结赢家与初始基线，检查验证数据重叠。可配置 max_model_requests、max_wall_seconds、no_improvement_rounds 和 target_communication_cost_ms，记录实际消耗及停止原因。
+
+工作区接口：GET /api/workspaces 列表、GET /api/workspaces?id=... 详情、GET /api/workspaces/export?id=... 下载记录；POST /api/workspaces 创建、/api/workspaces/update 保存新版本、/api/workspaces/attach 关联冻结候选、/api/workspaces/run 运行 optimization / validation / evaluation。修改和运行请求均携带 id 与 revision，冲突返回 409；run 返回 job 与 workspace_run_id，继续使用既有任务查询、停止接口。配置与运行记录保存到 outputs/workspaces，任务状态 active / archived。详见[演化选择与研究任务工作区记录](../../docs/yanxiao/演化选择与研究任务工作区迭代记录20261103.md)。
 
 新接口、模型口径、限制和旧实验迁移详见[平台通信优化与独立验证迭代记录](../../docs/yanxiao/平台通信优化与独立验证迭代记录20261103.md)。
 

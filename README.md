@@ -10,6 +10,8 @@ RFID Lab 用于管理 RFID 场景和协议，通过大模型生成候选协议�
 
 运行环境为 Windows、Python 和现代浏览器。Web 服务、文件预览和模型 HTTP 客户端使用 Python 标准库；实验分析使用 NumPy、pandas 和 Matplotlib。新版前端需 Node.js 20.19+ 或 22.12+ 构建，构建后由 Python 服务提供。
 
+当前 Vue 版已提供统一研究任务入口 `/#/workspaces`：配置版本、初始基线、模型元信息、演化候选、严格验证与独立评测按任务串联。自动迭代新增 Pareto 非支配选择、拥挤度保留及源码结构去重。当前页面与接口说明见[平台文档](code_add/course_project/README.md)和[前端说明](code_add/course_project/frontend/README.md)；下方较早截图保留原有操作背景。
+
 首次下载，在 PowerShell 中执行：
 
 ```powershell

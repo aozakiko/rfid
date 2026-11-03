@@ -68,6 +68,7 @@ class JobManager:
         self._history_limit = history_limit
         self._history_path = Path(history_path) if history_path else None
         self._secrets = {}
+        self._observers = {}
         if self._history_path and self._history_path.is_file():
             try:
                 rows = json.loads(self._history_path.read_text(encoding="utf-8"))
@@ -81,12 +82,14 @@ class JobManager:
             except (ValueError, TypeError, KeyError, OSError):
                 LOGGER.exception("Cannot recover background job history")
 
-    def submit(self, kind: str, payload: dict[str, Any], work: Callable[[Callable[..., None]], Any], *, on_skipped=None) -> dict[str, Any]:
+    def submit(self, kind: str, payload: dict[str, Any], work: Callable[[Callable[..., None]], Any], *, on_skipped=None, on_update=None) -> dict[str, Any]:
         if not self._capacity.acquire(blocking=False):
             raise APIError("后台队列已满，请等待已有任务完成后重试", HTTPStatus.SERVICE_UNAVAILABLE)
         job_id = uuid4().hex
         with self._lock:
             self._secrets[job_id] = tuple(_credentials(payload))
+            if on_update:
+                self._observers[job_id] = on_update
             self._jobs[job_id] = {
                 "id": job_id, "kind": kind, "status": "queued", "stage": "queued", "progress": 0,
                 "created_at": self._now(), "updated_at": self._now(), "started_perf": time.perf_counter(),
@@ -95,6 +98,7 @@ class JobManager:
             }
             self._prune()
             self._persist()
+            self._notify(job_id)
 
         def run() -> None:
             work_started = False
@@ -146,6 +150,15 @@ class JobManager:
             job["updated_at"] = self._now()
             self._jobs[job_id] = _sanitize(job, self._secrets.get(job_id, ()))
             self._persist()
+            self._notify(job_id)
+
+    def _notify(self, job_id):
+        callback = self._observers.get(job_id)
+        if callback:
+            try:
+                callback(self.get(job_id))
+            except Exception:
+                LOGGER.exception("Cannot persist linked workspace snapshot for job %s", job_id)
 
     def cancel(self, job_id):
         with self._lock:
@@ -189,6 +202,7 @@ class JobManager:
             if self._jobs[job_id]["status"] in TERMINAL_STATES:
                 del self._jobs[job_id]
                 self._secrets.pop(job_id, None)
+                self._observers.pop(job_id, None)
 
     def shutdown(self) -> None:
         # Accepted jobs finish before process exit, with no abandoned queued state.

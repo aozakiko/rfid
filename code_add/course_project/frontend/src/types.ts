@@ -130,6 +130,7 @@ export interface QualitySummary extends JsonObject {
   communication_eligible: boolean
 }
 export interface IterationResult extends JsonObject {
+  final_selection?: SelectionReport
   iterations: {
     iteration: number
     protocol_name: string
@@ -140,6 +141,7 @@ export interface IterationResult extends JsonObject {
     prompt_file?: string
     evaluation?: QualitySummary
     selection?: { retained: boolean; reason: string }
+    selection_details?: SelectionReport
   }[]
   population: string[]
   stop_reason: string
@@ -155,6 +157,54 @@ export interface IterationResult extends JsonObject {
     communication_reduction_fraction?: number | null
   } | null
   evidence_path?: string
+}
+export interface SelectionReport {
+  objective: string
+  population: string[]
+  feasible_count: number
+  duplicates_removed: number
+  decisions: {
+    name: string
+    retained: boolean
+    feasible: boolean
+    reason: string
+    quality_pass_rate: number | null
+    quality_score: number | null
+    mean_communication_cost_ms: number | null
+    pareto_rank: number | null
+    crowding_distance: number | null
+    boundary: boolean
+    duplicate_of: string | null
+  }[]
+}
+export interface ResearchWorkspace {
+  id: string
+  revision: number
+  title: string
+  description: string
+  status: 'active' | 'archived'
+  scene: string
+  task_profile: string
+  updated_at: string
+  optimization: JsonObject & { parents: string[]; baseline_protocol: string }
+  model_config: JsonObject
+  evaluation: JsonObject
+  configuration_path: string
+  task_source_sha256: string
+  baseline_candidate_id: string
+  candidates: (RegisteredCandidate & { roles: string[] })[]
+  candidate_problems: string[]
+  revisions: { revision: number; created_at: string; configuration: JsonObject }[]
+  runs: {
+    id: string
+    revision: number
+    action: string
+    created_at: string
+    job_id: string | null
+    status: JobStatus
+    job: Job
+    config: JsonObject
+  }[]
 }
 export interface ComparisonRow extends JsonObject {
   protocol: string

@@ -81,6 +81,14 @@ export const pages = [
     mark: '10',
     component: () => import('./views/ResearchView.vue'),
   },
+  {
+    path: '/workspaces',
+    name: 'workspaces',
+    title: '研究任务',
+    subtitle: '按研究任务保存配置版本、初始基线、演化候选和独立评测。',
+    mark: '11',
+    component: () => import('./views/WorkspacesView.vue'),
+  },
 ]
 export const router = createRouter({
   history: createWebHashHistory(),

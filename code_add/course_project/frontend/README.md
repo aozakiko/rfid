@@ -1,6 +1,6 @@
 # Vue 研究工作台
 
-RFID 平台的 Vue 3 + TypeScript + Vite 前端。使用 Vue Router 管理九个功能页面，Pinia 共享场景、模型配置和后台任务状态，Element Plus 提供表单与表格，ECharts 绘制后端结果。Python 服务和协议、验证、实验接口继续使用现有实现。
+RFID 平台的 Vue 3 + TypeScript + Vite 前端。使用 Vue Router 管理十一个功能页面，Pinia 共享场景、模型配置和后台任务状态，Element Plus 提供表单与表格，ECharts 绘制后端结果。Python 服务和协议、验证、实验接口继续使用现有实现。
 
 ## 开发
 
@@ -48,6 +48,7 @@ dist/、node_modules/、浏览器测试报告不进入 Git。新机器克隆后�
 | 实验产物 | 搜索、分页、CSV/JSON/文本/图片/HTML/PDF 预览和下载 |
 | 运行审计 | 持久任务历史、停止/重试、候选谱系、数据库记录 |
 | 候选评测 | 统一版本库、冻结源码、跨分布/规模/扰动验证与盲测、同场景对照和证据下载 |
+| 研究任务 | 配置版本、预设基线、模型元信息、演化选择证据、候选验证、跨场景评测、完整运行记录和归档 |
 
 模型密钥只存在当前页面的 Pinia 内存；路由切换共享，刷新即清空，不写入 localStorage/sessionStorage。模型请求仍交给 Python，不在前端直接连接模型。
 
@@ -68,7 +69,9 @@ npx playwright install chromium
 npm run test:e2e
 ~~~
 
-可使用 RFID_TEST_URL 指定测试服务地址。12 项浏览器用例包含十个页面、真实严格验证、自动迭代预览、小规模配置实验、冻结候选跨页面验证/评测/下载/历史恢复、移动视口和结构化错误；冲突保存、停止任务和图片/分页边界使用模拟响应，避免改写已有源码或付费调用模型。真实预览会生成带 vue_browser_preview 前缀的 Prompt 和任务历史，评测会保存版本和独立运行目录，请在可用于开发测试的本地服务运行。完整 Python 检查在 code_add 中执行 python -m tools.verify。
+可使用 RFID_TEST_URL 指定测试服务地址。15 项浏览器用例覆盖十一个页面、真实严格验证、自动迭代预览、小规模配置实验、冻结候选跨页面验证/评测/下载/历史恢复、工作区配置版本与真实研究操作、移动视口和结构化错误。冲突保存、停止任务、图片/分页边界和 Pareto 展示使用模拟响应；Pareto 选择算法与离线整轮演化另由 Python 测试覆盖，不调用付费模型。真实预览生成 vue_browser_preview 或 ws_ 前缀的 Prompt；评测和工作区保存版本与独立运行记录，请在开发测试服务运行。完整 Python 检查在 code_add 中执行 python -m tools.verify。
+
+统一入口为 /#/workspaces。先保存任务，再预览或执行自优化；每次运行绑定配置版本。模型连接可直接在工作区展开填写，只保存模型元信息，密钥仍只存在页面内存。Python 评测自动包含预设基线；JSON 候选可关联后单独进入原生统计流水线，每次选择一个版本和一组扰动。工作区从自己的持久记录恢复结果，即使普通任务历史已裁剪也可查看；服务中断会标记 interrupted，不会自动重新调用模型。
 
 “候选评测”从 /api/research/capabilities 读取类型与任务能力。Python 协议和统计 JSON 统一登记、分别运行原生评测引擎；页面之间传递冻结版本 ID，而非使用同名文件的最新内容。历史 Python 评测支持 /#/research?run=<运行ID>；统计流水线支持 /#/experiments?pipeline=<运行ID>。
 

@@ -64,38 +64,16 @@ def quality_summary(report):
 
 def evaluate_protocol(path, name, generator, config, *, deadline=None):
     report = validate_candidate(path, name, generator, **config, deadline=deadline)
-    return {"summary": quality_summary(report), "validation": report}
+    from course_project.evolution_selection import structural_hash
+    summary = quality_summary(report)
+    summary["structural_sha256"] = structural_hash(Path(path).read_text(encoding="utf-8-sig"), name)
+    return {"summary": summary, "validation": report}
 
 
-def select_population(names, evaluations, size, *, objective="quality_only", minimum_pass_rate=1.):
+def select_population(names, evaluations, size, *, objective="quality_only", minimum_pass_rate=1., incumbents=None):
     """Keep elites; ties retain incumbents and failed candidates cannot enter."""
-    comparable = [name for name in names if evaluations[name]["summary"]["selection_eligible"]]
-    identities = {tuple(evaluations[name]["summary"]["dataset_hashes"]) for name in comparable}
-    if len(identities) > 1:
-        raise ValueError("candidate datasets differ; population selection refused")
-    if objective not in {"quality_only", "precision_constrained_cost"}:
-        raise ValueError("unknown selection objective")
-    if objective == "precision_constrained_cost":
-        models = {evaluations[name]["summary"].get("channel_model_id") for name in comparable
-                  if evaluations[name]["summary"].get("communication_eligible")}
-        if len(models) > 1:
-            raise ValueError("channel models differ; cost selection refused")
-        def order(name):
-            row = evaluations[name]["summary"]
-            feasible = row.get("communication_eligible") and row["quality_pass_rate"] >= minimum_pass_rate
-            return ((0, row["mean_communication_cost_ms"], -row["quality_score"]) if feasible
-                    else (1, -row["quality_pass_rate"], -row["quality_score"]))
-        ranked = sorted(comparable, key=order)
-    else:
-        ranked = sorted(comparable, key=lambda name: (
-            -evaluations[name]["summary"]["quality_pass_rate"],
-            -evaluations[name]["summary"]["quality_score"],
-        ))
-    selected = ranked[:size]
-    # An initially incompatible library can still provide source material until
-    # two valid candidates exist. Such parents remain explicitly unranked.
-    selected += [name for name in names if name not in comparable][:max(0, size - len(selected))]
-    return selected
+    from course_project.evolution_selection import select
+    return select(names, evaluations, size, objective=objective, minimum_pass_rate=minimum_pass_rate, incumbents=incumbents)["population"]
 
 
 def feedback_for(population, evaluations):

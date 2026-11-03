@@ -27,6 +27,7 @@ export const useJobs = defineStore('jobs', () => {
     controllers.delete(id)
   }
   function watch(id: string) {
+    if (records.value[id] && terminal(records.value[id].status)) return
     if (timers.has(id) || controllers.has(id)) return
     async function poll() {
       timers.delete(id)

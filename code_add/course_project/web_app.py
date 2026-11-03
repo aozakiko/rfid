@@ -52,6 +52,7 @@ from course_project.validation import bounded_int as _coerce_int, bounded_float,
 from course_project.assets import import_file, preview_file
 from course_project.candidate_evaluation import evaluate_protocol, select_population, feedback_for, save_json, independent_validation
 from course_project.optimization_control import OptimizationControl, OptimizationStopped
+from course_project.evolution_selection import OBJECTIVES, select as selection_report, signature as pareto_signature
 from generic_protocol.security import analyze_file
 from generic_protocol.subprocess_runner import run_protocol_file
 from generic_tasks import list_profiles
@@ -997,7 +998,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
 
     selection_enabled = boolean_value(payload, "quality_selection", True) and task_profile != CUSTOM_TASK_PROFILE
     objective = str(payload.get("selection_objective") or "quality_only")
-    if objective not in {"quality_only", "precision_constrained_cost"}:
+    if objective not in OBJECTIVES:
         raise ValueError("不支持的选择目标")
     minimum_pass_rate = bounded_float(payload, "minimum_pass_rate", 1., 0., 1.)
     patience = _coerce_int(payload, "no_improvement_rounds", 0, 0, 12)
@@ -1017,7 +1018,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
         "absolute_tolerance": bounded_float(payload, "absolute_tolerance", 2., 0., 1e12),
         "timeout_seconds": _coerce_int(payload, "evaluation_timeout", 10, 1, 60)}
     evaluation_config["price_max"] = _coerce_int(payload, "evaluation_price_max", 1000, evaluation_config["price_min"] + 1, 1000000)
-    if selection_enabled and objective == "precision_constrained_cost" and evaluation_config["price_max"] - evaluation_config["price_min"] + 1 > 10000:
+    if selection_enabled and objective != "quality_only" and evaluation_config["price_max"] - evaluation_config["price_min"] + 1 > 10000:
         raise ValueError("当前匿名信道支持最多 10000 个属性桶，请缩小评价范围")
     population = list(dict.fromkeys(parents))
     evaluations = {}
@@ -1080,15 +1081,20 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             save_json(evidence_dir / "run.json", run_record)
             raise
 
-        population = select_population(population, evaluations, len(parents), objective=objective, minimum_pass_rate=minimum_pass_rate)
-        baseline_name = population[0]
+        initial_selection = selection_report(population, evaluations, len(parents), objective=objective, minimum_pass_rate=minimum_pass_rate)
+        population = initial_selection["population"]
+        run_record["initial_selection"] = initial_selection
+        declared_baseline = payload.get("baseline_protocol")
+        if declared_baseline and declared_baseline not in parents:
+            raise ValueError("指定基线必须来自初始父代")
+        baseline_name = declared_baseline or select_population(parents, evaluations, 1, objective=objective, minimum_pass_rate=minimum_pass_rate)[0]
 
     def best_score():
         if not evaluations:
             return None
         ranked = select_population(list(population), evaluations, 1, objective=objective, minimum_pass_rate=minimum_pass_rate)
         row = evaluations[ranked[0]]["summary"]
-        if objective == "precision_constrained_cost" and row.get("communication_eligible") and row["quality_pass_rate"] >= minimum_pass_rate:
+        if objective != "quality_only" and row.get("communication_eligible") and row["quality_pass_rate"] >= minimum_pass_rate:
             return (1, -row["mean_communication_cost_ms"], row["quality_score"])
         return (0, row["quality_pass_rate"] or 0., row["quality_score"] or 0.)
 
@@ -1122,13 +1128,16 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             stop_reason = exc.reason
             break
         previous_score = best_score()
-        if not dry_run and target_cost > 0 and objective == "precision_constrained_cost" and previous_score is not None and previous_score[0] == 1 and -previous_score[1] <= target_cost:
+        previous_front = pareto_signature(population, evaluations, minimum_pass_rate) if evaluations and objective == "pareto_diversity" else None
+        if not dry_run and target_cost > 0 and objective != "quality_only" and previous_score is not None and previous_score[0] == 1 and -previous_score[1] <= target_cost:
             stop_reason = "target_communication_cost"
             break
         if not dry_run and selection_enabled:
             for name in population:
                 evaluate_name(name)
             pairs = [(a, b) for i, a in enumerate(population) for b in population[i + 1:]]
+            if not pairs and population:
+                pairs = [(population[0], population[0])]
         parent_a, parent_b = pairs[index % len(pairs)]
         protocol_name = f"{prefix}_{index + 1:02d}"
         logs: list[str] = []
@@ -1189,7 +1198,7 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
         if not dry_run:
             workflow_args["request_guard"] = control.before_request
             workflow_args["evaluation_deadline"] = control.started + control.max_seconds
-        if not dry_run and selection_enabled and objective == "precision_constrained_cost":
+        if not dry_run and selection_enabled and objective != "quality_only":
             workflow_args["requirement_text"] += (
                 "\n通信优化必须实现 execute_channel(self, channel, price_min, price_max)，返回 estimated_values 列表。"
                 "channel.observe(round_index=0, slots_per_value=256) 返回 counts、variance 列表及 saturated_bins。"
@@ -1244,16 +1253,18 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
                 evaluate_name(protocol_name)
                 combined = [*population, protocol_name]
                 try:
-                    population = select_population(combined, evaluations, len(parents), objective=objective, minimum_pass_rate=minimum_pass_rate)
+                    details = selection_report(combined, evaluations, len(parents), objective=objective, minimum_pass_rate=minimum_pass_rate, incumbents=before)
+                    population = details["population"]
                 except ValueError:
                     run_record.update(status="failed", error_type="IncomparableCandidates")
                     save_json(evidence_dir / "run.json", run_record)
                     raise
                 item["evaluation"] = evaluations[protocol_name]["summary"]
+                item["selection_details"] = details
             item["selection"] = {"objective": objective, "population_before": before,
                 "population_after": list(population), "retained": protocol_name in population,
-                "reason": "ranked_by_" + objective if target_exists else "candidate_file_unavailable"}
-            run_record["rounds"].append({key: item.get(key) for key in ("iteration", "parent_a", "parent_b", "protocol_name", "status", "evaluation", "selection")})
+                "reason": next((row["reason"] for row in details["decisions"] if row["name"] == protocol_name), "not_selected") if target_exists else "candidate_file_unavailable"}
+            run_record["rounds"].append({key: item.get(key) for key in ("iteration", "parent_a", "parent_b", "protocol_name", "status", "evaluation", "selection", "selection_details")})
             run_record["population"] = list(population)
             run_record["budget"] = control.snapshot()
             save_json(evidence_dir / "run.json", run_record)
@@ -1267,17 +1278,21 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
         if not dry_run and result.get("status") == "success":
             available.add(protocol_name)
         current_score = best_score()
-        if not dry_run and target_cost > 0 and objective == "precision_constrained_cost" and current_score is not None and current_score[0] == 1 and -current_score[1] <= target_cost:
+        if not dry_run and target_cost > 0 and objective != "quality_only" and current_score is not None and current_score[0] == 1 and -current_score[1] <= target_cost:
             stop_reason = "target_communication_cost"
             break
-        stagnant = 0 if previous_score is not None and current_score > previous_score else stagnant + 1
+        improved = previous_score is not None and current_score > previous_score
+        if previous_front is not None:
+            improved = improved or pareto_signature(population, evaluations, minimum_pass_rate) != previous_front
+        stagnant = 0 if improved else stagnant + 1
         if patience and selection_enabled and not dry_run and stagnant >= patience:
             stop_reason = "no_improvement"
             break
     if run_record is not None:
         # Freeze a winner even when the optional immediate holdout is disabled.
         winner = select_population(population, evaluations, 1, objective=objective, minimum_pass_rate=minimum_pass_rate)[0]
-        run_record.update(winner=winner, baseline=baseline_name)
+        run_record.update(winner=winner, baseline=baseline_name,
+            final_selection=selection_report(population, evaluations, len(parents), objective=objective, minimum_pass_rate=minimum_pass_rate, incumbents=population))
         if independent_enabled:
             try:
                 control.check()
@@ -1304,21 +1319,26 @@ def run_selfopt_auto_iterate(payload: dict[str, Any], progress_logger=None) -> d
             unranked_parents=[name for name in population if not evaluations[name]["summary"]["selection_eligible"]])
         save_json(evidence_dir / "run.json", run_record)
     registered_winner = registered_baseline = None
+    registered_ids = []
     if run_record is not None and run_record.get("winner"):
         from course_project.research_service import register_generated
         # Use the evaluated source snapshots, never a later same-name edit.
-        for label, name in (("winner", run_record["winner"]), ("baseline", baseline_name)):
+        for name in evaluations:
             original = _find_protocol_file(scene, name)
             frozen_bytes = (evidence_dir / (name + ".source.txt")).read_bytes()
             if original.read_bytes() != frozen_bytes:
                 continue
             registered = register_generated(original, scene, task_profile, evidence=_relative_to_project(evidence_dir / "run.json"))
-            if label == "winner": registered_winner = registered["id"]
-            else: registered_baseline = registered["id"]
+            registered_ids.append(registered["id"])
+            if name == run_record["winner"]: registered_winner = registered["id"]
+            if name == baseline_name: registered_baseline = registered["id"]
     return {
         "scene": scene,
         "parents": parents,
         "winner_candidate_id": registered_winner, "baseline_candidate_id": registered_baseline,
+        "candidate_ids": registered_ids,
+        "initial_selection": run_record.get("initial_selection") if run_record else None,
+        "final_selection": run_record.get("final_selection") if run_record else None,
         "prefix": prefix,
         "dry_run": dry_run,
         "task_profile": task_profile,
@@ -1749,6 +1769,16 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, {"ok": True, "project_root": str(PROJECT_ROOT)})
             elif path == "/api/selfopt/state":
                 json_response(self, selfopt_state())
+            elif path == "/api/workspaces":
+                from course_project import workspace_service
+                wid = parse_qs(parsed.query).get("id", [""])[0]
+                json_response(self, {"workspace": workspace_service.detail(wid)} if wid else workspace_service.listing())
+            elif path == "/api/workspaces/export":
+                from course_project import workspace_service
+                wid = parse_qs(parsed.query).get("id", [""])[0]
+                data = workspace_service.detail(wid)
+                send_bytes(self, json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8"),
+                    "application/json; charset=utf-8", download_name=f"research-task-{wid}.json")
             elif path == "/api/research/capabilities":
                 from course_project.research_service import capabilities
                 json_response(self, capabilities())
@@ -1822,7 +1852,19 @@ class CourseRequestHandler(BaseHTTPRequestHandler):
                 json_response(self, result, HTTPStatus.CREATED)
                 return
             payload = read_json_body(self)
-            if path == "/api/research/register":
+            if path == "/api/workspaces":
+                from course_project.workspace_service import save
+                json_response(self, {"workspace": save(payload)}, HTTPStatus.CREATED)
+            elif path == "/api/workspaces/update":
+                from course_project.workspace_service import save, identifier
+                json_response(self, {"workspace": save(payload, workspace_id=identifier(payload.get("id")))})
+            elif path == "/api/workspaces/attach":
+                from course_project.workspace_service import attach
+                json_response(self, {"workspace": attach(payload)})
+            elif path == "/api/workspaces/run":
+                from course_project.workspace_service import start
+                json_response(self, start(JOB_MANAGER, payload), HTTPStatus.ACCEPTED)
+            elif path == "/api/research/register":
                 from course_project.research_service import register
                 if not payload.get("path") and payload.get("family", "python") == "python":
                     scene = _validate_scene(str(payload.get("scene") or ""))
@@ -1920,6 +1962,8 @@ def main() -> int:
     args = parser.parse_args()
 
     init_database()
+    from course_project.workspace_service import recover
+    recover(JOB_MANAGER)
     server = CourseHTTPServer((args.host, args.port), CourseRequestHandler)
     print(f"RFID self-optimization platform: http://{args.host}:{args.port}")
     try:

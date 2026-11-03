@@ -26,6 +26,8 @@ COMPILE_FILES = (
     "course_project/engineering_service.py",
     "course_project/frontend_assets.py",
     "course_project/research_service.py",
+    "course_project/evolution_selection.py",
+    "course_project/workspace_service.py",
     "course_project/task_process.py",
     "course_project/candidate_evaluation.py",
     "course_project/optimization_control.py",
