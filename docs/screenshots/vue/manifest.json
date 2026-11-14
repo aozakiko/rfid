@@ -1,0 +1,203 @@
+{
+  "captured_on": "2026-11-14",
+  "updated_at": "2026-11-14T13:16:32",
+  "source_baseline": "b2917442bd50b724a7ab68484e644aa9609b7692",
+  "local_fixes": [
+    "NumPy masked-array preload before audit hook",
+    "empty HTTPError body handling",
+    "verification timeout 600s"
+  ],
+  "frontend": "Vue 3 + TypeScript + Vite production build; same build as merged report screenshots",
+  "page_errors": [],
+  "checked_route_views": 22,
+  "horizontal_page_overflows": [],
+  "notes": [
+    "Crops preserve actual browser pixels; no text, counters, results or status was retouched.",
+    "Input example in 13-custom-task.png was not submitted to a model.",
+    "Research example is a frozen baseline validation/evaluation demonstration, not evidence of LLM optimization gains."
+  ],
+  "files": [
+    {
+      "file": "01-overview.png",
+      "route": "/#/",
+      "title": "研究总览",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "2993d55aafef1380b898238ada31a6748392c2c6e590d209ef6ada062676c24f"
+    },
+    {
+      "file": "02-assets.png",
+      "route": "/#/assets",
+      "title": "场景与代码",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "189387629b7eefeb3ed7f5eaf017deef4ecafaf75d561a386bd15daa0b1ffb9f"
+    },
+    {
+      "file": "03-design.png",
+      "route": "/#/design",
+      "title": "协议设计",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "b9829d6783973f7f752b74e0eb5f26681f9c0d9c429ea91781084bbebf45db45"
+    },
+    {
+      "file": "04-validation.png",
+      "route": "/#/validation",
+      "title": "验证沙箱",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "372479c5c998b6985a3da90247467d1d6fde1c29209c375bd131d1c7851a56b1"
+    },
+    {
+      "file": "05-optimization.png",
+      "route": "/#/optimization",
+      "title": "自动迭代",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "c6dc99b2abc19aff86d45480ef266bacb29db607ae04546b6bceec5e14f4bcde"
+    },
+    {
+      "file": "06-experiments.png",
+      "route": "/#/experiments",
+      "title": "实验分析",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "ab9e790377eda2d21754abf78cb15ec948073f1212ab1df1857cd37c47f4f171"
+    },
+    {
+      "file": "07-statistics.png",
+      "route": "/#/statistics",
+      "title": "统计基准",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "99c26233dcd59496ee0c0708d11a5e65891fd753e732ea29b02b4c7323c55d82"
+    },
+    {
+      "file": "08-artifacts.png",
+      "route": "/#/artifacts",
+      "title": "实验产物",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "730585b85003bd7989b19938f646b8d704452aabd1be39da59fc5e08114c2135"
+    },
+    {
+      "file": "09-audit.png",
+      "route": "/#/audit",
+      "title": "运行审计",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "034cf742198087696dc2ed4d8c1ea912ec0d4d62541f42f20d2fafd4fe92f145"
+    },
+    {
+      "file": "10-research.png",
+      "route": "/#/research",
+      "title": "候选评测",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "009b4f2816eddf61e1d73e8d1cea27574fa55e55e3336a4440b80f11e28da213"
+    },
+    {
+      "file": "11-workspaces.png",
+      "route": "/#/workspaces",
+      "title": "研究任务",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "4d9703d93e11c77a3f9fe7f61530594557f20d399005795a6691300458bca49f"
+    },
+    {
+      "file": "12-upload.png",
+      "route": "/#/assets",
+      "title": "文件导入（局部）",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "9c9b4e0e722855cba57b270b6294d2df1a6a8048135822603851dfc3ad8d7c6e"
+    },
+    {
+      "file": "13-custom-task.png",
+      "route": "/#/design",
+      "title": "自定义任务输入示例（局部，未提交生成）",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "aaf3b16997741670a90c73c6a721c44d2ad49b6457b67d6b0a870bd02a850163"
+    },
+    {
+      "file": "14-validation-result.png",
+      "route": "/#/validation",
+      "title": "实际严格验证结果（局部）",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "9566c1094a66a9d64ae6cdd25e314c1509e1ba1e6b763d54690321c7da79ee22"
+    },
+    {
+      "file": "15-research-result.png",
+      "route": "/#/research",
+      "title": "实际冻结基线评测（局部）",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "c2a08f7e9a3e051457289f5d57cbf4d2c9d04f886e3743be76c66bd65b18c851"
+    },
+    {
+      "file": "16-csv-preview.png",
+      "route": "/#/artifacts",
+      "title": "实际CSV预览（局部）",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "sha256": "fc3bfbaebb3d5bb038039356d957238875dcc86c6c93652d1be8e548b3e840a2"
+    },
+    {
+      "file": "17-artifacts-mobile.png",
+      "route": "/#/artifacts",
+      "title": "实验产物移动视图",
+      "viewport": [
+        390,
+        844
+      ],
+      "sha256": "dc6e09275746cba972573920fed5158bad9f75277bdbf0f6e772ec1f9be1a0be"
+    },
+    {
+      "file": "18-statistics-mobile.png",
+      "route": "/#/statistics",
+      "title": "统计基准移动视图",
+      "viewport": [
+        390,
+        844
+      ],
+      "sha256": "a38966f5d70d3ef7ae6e5c5f0d33db8cd272628d383056cb110331d3514b41c9"
+    }
+  ],
+  "source_release_commit": "daa4070f49320ffbf4c2eb674f8805acfc7a3ef3",
+  "frontend_package_lock_sha256": "ce2e16ba9fd1b67fe849b94d9cfa743f404cf12c33d8efca805558d0dd099a57"
+}

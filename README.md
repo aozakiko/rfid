@@ -1,340 +1,412 @@
-# RFID Lab · 协议自优化平台操作指南
+# RFID Lab · 大模型驱动的 RFID 协议自优化研究平台
 
-RFID Lab 用于管理 RFID 场景和协议，通过大模型生成候选协议，再完成验证、迭代和实验分析。应用源代码位于 [`code_add/`](code_add/)，本文件是仓库首页的图文操作指南。
+围绕“描述任务 → 生成候选 → 受控验证 → 演化选择 → 冻结评测 → 追溯结果”，将 RFID 协议研究、统计实验和资产管理集中到一个 Web 工作台中。当前前端为 **Vue 3 + TypeScript + Vite**，后端为 **Python HTTP 服务 + SQLite**，提供 11 个功能页面。
 
-2026-11-03：默认前端已升级为 **Vue 3 + TypeScript + Vite**。新版操作、构建和开发说明见 [前端说明](code_add/course_project/frontend/README.md)。下方截图和详细页面操作保留旧版工作台的记录，旧版可从 `/legacy` 打开。
+![当前 Vue 工作台研究总览](docs/screenshots/vue/01-overview.png)
 
-![RFID Lab 平台总览](docs/screenshots/01-overview.png)
+## 项目信息
 
-## 1. 下载与启动
+以下信息沿用 2026 年 11 月提供的结题报告版本；软件功能、页面入口、测试与实验结论按当前仓库核对。
 
-运行环境为 Windows、Python 和现代浏览器。Web 服务、文件预览和模型 HTTP 客户端使用 Python 标准库；实验分析使用 NumPy、pandas 和 Matplotlib。新版前端需 Node.js 20.19+ 或 22.12+ 构建，构建后由 Python 服务提供。
+| 项目 | 内容 |
+| --- | --- |
+| 项目名称 | 基于大模型的RFID射频识别通讯协议自优化研究平台开发 |
+| 项目编号 | S202610486321 |
+| 学校 / 学院 | 武汉大学 / 计算机学院 |
+| 专业 | 软件工程 |
+| 团队成员 | 陈涛、严枭、刘滕飞 |
+| 指导教师 | 朱卫平 教授 |
+| 材料核对日期 | 2026-11-14 |
 
-当前 Vue 版已提供统一研究任务入口 `/#/workspaces`：配置版本、初始基线、模型元信息、演化候选、严格验证与独立评测按任务串联。自动迭代新增 Pareto 非支配选择、拥挤度保留及源码结构去重。当前页面与接口说明见[平台文档](code_add/course_project/README.md)和[前端说明](code_add/course_project/frontend/README.md)；下方较早截图保留原有操作背景。
+[结题报告 Word 版](docs/reports/大学生创新创业训练项目结题报告.docx) · [结题报告 PDF 版](docs/reports/大学生创新创业训练项目结题报告.pdf) · [版本与材料核对说明](docs/reports/README.md) · [本次验证记录](docs/verification/2026-11-14.json)
 
-首次下载，在 PowerShell 中执行：
+平台已经实现自然语言任务输入、模型即时配置、严格子进程验证、预算控制、Pareto 选择、候选冻结和独立评测。研究结果属于声明的软件信道与统计契约；模拟通信成本、程序执行成功、统计精度和真实射频硬件性能分别报告。
+
+## 快速启动
+
+### 首次安装
+
+准备 Python、Node.js 和现代浏览器。前端 `package.json` 要求 **Node.js 20.x ≥ 20.19，或 ≥ 22.12**；构建完成后由 Python 提供页面，日常运行无需另起 Node 服务。
+
+在 PowerShell 中执行：
 
 ```powershell
 git clone https://github.com/aozakiko/rfid.git
 Set-Location .\rfid
 
-# 在仓库根目录创建虚拟环境，不需要修改 PowerShell 的脚本执行策略。
+# 安装仓库声明的 Python 依赖，不需要激活虚拟环境。
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install numpy pandas matplotlib
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# 构建 Vue 前端，依赖和构建产物留在本机，不提交 Git。
+# 安装锁文件中的前端依赖，执行 TypeScript 检查和生产构建。
 Set-Location .\code_add\course_project\frontend
 npm ci
 npm run build
-Set-Location ..\..\..
 
-# 启动命令需要在 code_add 目录运行。
-Set-Location .\code_add
+# 回到 code_add 启动 Python 服务。
+Set-Location ..\..
 ..\.venv\Scripts\python.exe -m course_project.web_app --host 127.0.0.1 --port 8765
 ```
 
-浏览器打开 **<http://127.0.0.1:8765>**。停止服务时，在运行服务的终端按 `Ctrl+C`。
+浏览器访问 **http://127.0.0.1:8765**，在启动服务的终端按 `Ctrl+C` 停止。
 
-如果当前 Python 环境已安装实验依赖，也可以直接执行：
+> 新机器必须先构建前端。`dist/` 和 `node_modules/` 不提交 Git；缺少 `dist/` 时根路径会显示兼容工作台，容易误以为页面没有更新。新版也可从 `/ui/` 进入，旧版保留在 `/legacy`。本 README 的截图和操作均对应新版。
+
+### 已有项目更新
+
+先妥善保存本地修改，再在仓库根目录执行：
 
 ```powershell
-Set-Location "D:\HuaweiMoveData\Users\destiny\Desktop\大创\rfid\code_add"
-python -m course_project.web_app --host 127.0.0.1 --port 8765
+git pull --ff-only
+Set-Location .\code_add\course_project\frontend
+npm ci
+npm run build
+Set-Location ..\..
+..\.venv\Scripts\python.exe -m course_project.web_app --host 127.0.0.1 --port 8765
 ```
 
-截图取自实际页面。基础工作区截图使用独立的临时审计数据库；统计基准截图使用当前已生成的20-seed实验结果和真实候选记录。截图中的本机绝对路径统一简写为 `code_add`，不会包含 API Key。运行时的数量、日期和结果随本地资产变化。
+若旧服务仍占用 8765，先在其终端按 `Ctrl+C`。Python 源码更新后需重启后端；仅修改页面中的模型 URL、Key 或模型名时，下一次提交立即使用新配置。
 
-## 1.1 通用版本一键验证
+本次完整检查的实际环境为 Windows、Python 3.13.5、NumPy 2.4.2、pandas 3.0.0、Matplotlib 3.10.8、Node.js 22.16.0 和 Microsoft Edge。**该数值依赖组合高于 `requirements.txt` 的上限**，已单独记录，不代表所有依赖组合均已验证。首次安装以仓库依赖范围为准，精确复现本次记录时对照[验证文件](docs/verification/2026-11-14.json)。
 
-本轮新增通用任务画像、协议适配、配置化 benchmark 和安全子进程执行。执行完整验证：
+## 先走通一个不调用模型的流程
+
+1. 在顶部场景框选择 `test`，打开“场景与代码”，查看 `Task.py` 和 `MeasuredHistogramMean` 等协议。
+2. 打开“协议设计”，选择任务画像和两个不同父代，点击“预览生成任务”，检查 Prompt 与目标路径。
+3. 打开“验证沙箱”，选择“连续数值均值估计”和 `MeasuredHistogramMean`，使用较小标签规模运行严格验证，查看阶段结果和历史。
+4. 打开“研究任务”，创建任务并保存配置版本，选择初始基线，分别执行冻结候选验证和小规模跨场景评测。
+5. 在“候选评测”查看验证 / 盲测拆分、同场景对照和运行证据，在“实验产物”预览 CSV、JSON 和报告。
+6. 确认流程后，再配置模型、实际生成候选或启动多轮优化。
+
+预览只产生 Prompt 与计划路径，不调用模型，也不创建候选 `.py` 源码。冻结基线的小规模评测可以执行真实后端流程，无需付费模型。
+
+## 页面导航与操作
+
+所有地址均接在 `http://127.0.0.1:8765` 后面。`test`、`multi_mode` 等是**场景目录**；“任务画像”决定本次任务、输出契约和验证语义，二者可以分别选择。
+
+| 页面 | 地址 | 核心用途 |
+| --- | --- | --- |
+| 研究总览 | `/#/` | 项目资产概况、世代分布和工作流入口 |
+| 场景与代码 | `/#/assets` | 场景管理、源码编辑、版本校验和文件导入 |
+| 协议设计 | `/#/design` | 模型配置、任务描述、Prompt 与单次候选生成 |
+| 验证沙箱 | `/#/validation` | 严格 / 兼容验证、阶段证据和验证历史 |
+| 自动迭代 | `/#/optimization` | 父代池、通信优化、Pareto 多样性、预算与停止条件 |
+| 实验分析 | `/#/experiments` | 配置实验、盲测流水线、结果重建与绘图 |
+| 统计基准 | `/#/statistics` | 同场景比较、置信区间、Pareto 与逐 seed 结果 |
+| 实验产物 | `/#/artifacts` | 文件搜索、分类预览、分页与原件下载 |
+| 运行审计 | `/#/audit` | 持久任务历史、取消 / 重试、验证记录和候选来源 |
+| 候选评测 | `/#/research` | 冻结版本、跨分布 / 规模 / 扰动的独立评测 |
+| 研究任务 | `/#/workspaces` | 配置版本、初始基线和完整研究运行记录 |
+
+### 研究总览
+
+总览展示当前场景、协议、Prompt、任务和实验资产，提供后续工作流入口。首页截图见文首。文件数量与运行统计由本机资产生成，会随使用变化。
+
+### 场景与代码：编辑与导入
+
+![场景资产、源码编辑和版本保护](docs/screenshots/vue/02-assets.png)
+
+选择场景后可新建场景、复制基线、搜索文件和编辑源码。保存携带读取时的 SHA-256 `revision`；磁盘文件已改变时返回 409，保留编辑缓冲，重新读取并核对后再保存。编辑器支持 `Ctrl/⌘+S` 和未保存提示。
+
+文件导入集中在本页，可选择场景协议、Prompt、场景 Outputs、平台运行产物或 Experiments 产物。
+
+![实际文件导入表单](docs/screenshots/vue/12-upload.png)
+
+| 保存位置 | 用途 |
+| --- | --- |
+| 场景协议 | 将 `.py` 文件保存到所选场景的指定世代 |
+| 场景 Prompt | 将 `.txt` 保存到场景 `prompts/` |
+| 场景 Outputs | 保存到场景 `outputs/uploads/` |
+| 运行产物 | 保存到 `course_project/outputs/uploads/` |
+| Experiments 产物 | 保存到 `Experiments/uploads/` |
+
+每个文件最多 10 MB；文本采用 UTF-8，JSON 上传时校验格式，同名文件返回 409。导入协议仅保存资产，需在验证页手动选择并运行。
+
+### 协议设计：任务与单次生成
+
+![模型设置与单次候选生成](docs/screenshots/vue/03-design.png)
+
+选择任务画像、两个不同父代、新协议名和目标世代，可补充需求、设置修复轮数与验证规模。通过“预览生成任务”先核对 Prompt，再按需点击“生成协议代码”。后台面板展示排队、模型请求、验证、自修复和完成状态，完成后可预览产物并衔接候选冻结。
+
+选择“任意自定义任务”后会出现专用说明框：
+
+![自定义任务的输入说明与契约](docs/screenshots/vue/13-custom-task.png)
+
+建议说明输入属性、目标、返回格式、误差要求及资源约束，例如：
+
+```text
+估计标签数值属性的 90 分位数，返回 [estimated_p90]；
+描述对缺失数据的处理方法，并在保证精度的前提下减少通信。
+```
+
+自定义说明会进入 Prompt 和运行记录。内置统计任务具有对应真值与指标；任意业务尚无专用评价器时，平台只验证执行与输出契约，不生成虚假的准确率。要对新业务给出可比较的精度，应补充任务注册、真值和评价逻辑，入口见 [`generic_tasks/`](code_add/generic_tasks/) 与 [`generic_protocol/`](code_add/generic_protocol/)。
+
+### 验证沙箱：阶段判定与历史
+
+![验证配置和结果](docs/screenshots/vue/04-validation.png)
+
+选择协议或冻结候选、任务画像、标签数量、重复次数和值域，运行后分别查看静态检查、运行时隔离、物理约束和任务语义。结果区展示逐次执行、质量与耗时，历史记录保存源码摘要及阶段证据。
+
+![一次实际严格验证的完整结果](docs/screenshots/vue/14-validation-result.png)
+
+严格模式使用独立子进程、AST 与调用限制、标签访问代理、运行时审计、超时及资源限制。兼容模式可运行历史协议并展示直接标签访问等告警。两种模式的状态分别标识；严格验证属于软件约束，不能当作完整操作系统沙箱或硬件隐私证明。
+
+### 自动迭代：目标、预算与选择证据
+
+![自动迭代的精度、成本、预算和独立验证设置](docs/screenshots/vue/05-optimization.png)
+
+配置父代池、开发集、质量门槛、轮数、最大请求数和时间预算，可选择：
+
+| 选择目标 | 行为 |
+| --- | --- |
+| `quality_only` | 质量探索 |
+| `precision_constrained_cost` | 在精度要求下比较平台计量通信成本 |
+| `pareto_diversity` | 对通过率、质量与成本分层，以拥挤度保留多样性，并进行 AST 结构去重 |
+
+每轮保存候选、保留 / 排除原因、实际请求数、耗时和停止原因。独立验证在搜索结束后冻结赢家与初始基线，并检查验证数据重叠。先使用预览模式核对父代与 Prompt，再按需真实运行；预览结果不代表已完成模型优化。
+
+### 研究任务：保存一条完整研究流程
+
+![统一研究任务工作区](docs/screenshots/vue/11-workspaces.png)
+
+创建任务并选择初始基线、演化父代、目标与评测计划；每次保存产生配置版本。演化、验证和评测分别形成独立运行 ID，关联同一任务，刷新后可恢复已保存状态。旧版本提交返回 409，避免把不同配置的结果混在一起。
+
+截图示例使用冻结基线完成了真实严格验证与 16 条小规模评价，用于展示流程；它不是一次真实 LLM 优化收益实验。模型元信息可以保存，API Key 不进入任务配置。
+
+### 候选评测：冻结后再独立比较
+
+![候选版本库与跨场景评测](docs/screenshots/vue/10-research.png)
+
+从已有协议、生成结果或统计 JSON 候选冻结版本，确定基线、分布、规模、扰动、验证 seed 和盲测 seed，再提交评测。Python 候选与统计 JSON 按各自能力进入对应引擎；成本模型不同的结果不跨引擎排名。
+
+![冻结基线的真实评测结果与证据入口](docs/screenshots/vue/15-research-result.png)
+
+结果保留验证 / 盲测切换、同场景比较、候选源码摘要、独立性检查和清单下载。运行成功与质量达标分别报告，缺少可信通信事件的候选不能以零成本进入通信前沿。
+
+### 实验分析：配置、流水线与绘图
+
+![配置化实验、独立盲测和结果重建](docs/screenshots/vue/06-experiments.png)
+
+选择配置或输入实验参数，可以提交配置化 benchmark、开发—验证—冻结—盲测流水线，或从原始结果重建派生报告。页面同时提供原项目敏感度与演化绘图入口。后台显示命令进度、输出与失败原因；结果重建写入派生目录，保留原始评价数据。
+
+### 统计基准：同条件比较与逐次证据
+
+![当前统计基准与同场景 Pareto](docs/screenshots/vue/07-statistics.png)
+
+按实验集、任务、分布、标签规模、扰动及通信指标筛选。前沿、资格、排除原因和置信区间由后端计算；同场景结果可直接比较，跨场景汇总只作为描述性平均。点击协议或图点查看逐 seed 真值、估计、数据 hash、复核轨迹及失败原因。
+
+六组统计实验分别为主实验、消融、三任务共享、复核敏感性、鲁棒性和独立盲测。真实模型候选可查看记录或另行生成 / 导入。完整实验规格、数值与边界见后文。
+
+### 实验产物：每种文件使用合适的预览
+
+![资产搜索、分类预览与下载](docs/screenshots/vue/08-artifacts.png)
+
+![CSV 原始结果的实际分页预览](docs/screenshots/vue/16-csv-preview.png)
+
+| 文件类型 | 当前展示方式 |
+| --- | --- |
+| CSV | 每页 20 条、表头与单元格、宽表在容器内滚动 |
+| JSON | 可展开结构；大于 1 MB 时使用分页文本 |
+| Python / Prompt / Markdown / 日志等文本 | 等宽文本，长文件按每页 100 行阅读 |
+| PNG / JPG / WebP / SVG | 图片预览并适应容器 |
+| HTML / PDF | 受限 iframe 内嵌预览 |
+| 过大文本或其他文件 | 下载原件查看 |
+
+产物列表提供搜索与分页，所有允许访问的资产均可下载原件。原始 JSON 报告过大时，在“统计基准”使用逐次详情入口，避免一次展开整个报告。
+
+### 运行审计：状态、停止与重试
+
+![后台任务、AI 记录与候选来源](docs/screenshots/vue/09-audit.png)
+
+后台任务支持历史查询、取消和重试。任务历史、验证报告和候选来源持久化；服务重启后，原进程中未完成任务标记为 `interrupted`，通过新名称重试，不能从中断的模型响应继续计算。切换页面不取消任务，刷新后从服务端历史恢复展示。
+
+### 移动端
+
+11 个页面均按 390×844 视口检查。表单收为单列、宽表在自身容器滚动，文件与长文本通过分页查看。
+
+<img src="docs/screenshots/vue/17-artifacts-mobile.png" alt="实验产物页的移动布局" width="320" /> <img src="docs/screenshots/vue/18-statistics-mobile.png" alt="统计基准页的移动布局" width="320" />
+
+截图拍摄于 2026-11-14，同一生产构建、后端源码与 Vue 页面版本；等待数据加载完成后拍摄，没有改写页面数据。各图的路由、视口和 SHA-256 见[截图清单](docs/screenshots/vue/manifest.json)。旧工作台截图仍在历史目录中，本 README 不混用旧图。
+
+## 模型配置：直接使用 URL、Key 和模型名称
+
+在“协议设计”填写：
+
+| 设置 | 说明 |
+| --- | --- |
+| API URL | 网关提供的基础地址，例如 `https://your-gateway.example/v1` |
+| API Key | 对应网关的密钥 |
+| 模型名称 | 网关实际支持的模型标识 |
+| 超时 / 重试 / 生成参数 | 按需设置，长响应可能需要较长等待 |
+
+不需要模型环境变量，也不需要 Endpoint Path。客户端先尝试 Responses，遇到接口不支持的状态时尝试 Chat Completions；鉴权失败、限流或网络故障不作为更换接口的依据。可先点击模型检查或列出模型，再提交真实生成。
+
+修改后，下一次检查、生成或迭代使用新配置，无需重启；已经提交的任务继续使用提交时的配置。Key 在当前页面内存和活动请求 / 后台任务内使用，不写入配置文件、浏览器持久存储或公开任务历史；刷新页面后需重新填写。
+
+日志停在“正在请求大模型”可能仍在等待上游完整响应。先检查任务状态与超时设置，避免连续重复提交。预览、冻结基线评测和复现已有模型候选均不需要密钥。
+
+## 算法、实验与结论口径
+
+### 已实现的方法
+
+- **统一任务契约**：任务画像、输入范围、真值、输出语义、误差阈值、数据拆分与运行结果保持明确边界。
+- **共享统计草图**：在公开整数值域上通过匿名 OR 槽测量和零槽反演构造直方图，同次采集复用到均值、总体方差、在场标签基数和 Top-k。
+- **通信事件计量**：分别记录 reader bits、tag bits、全部预留 slots、frames 和 rounds；CPU 时间单列。
+- **复核策略**：无复核、固定 2/3/4 轮，以及阈值 0.5/1/2 的全帧自适应复核。
+- **闭环搜索与评价**：候选生成、自修复、严格验证、精度约束 / Pareto 选择、结构去重和冻结后的独立评测。
+
+共享任务行可能来自同一个 `collection_id`，采集费用只计一次，不能按任务行数重复求和。饱和桶的零槽截断带来偏差，当前实现未提供无偏性或完整隐私保证。
+
+### 六组正式实验
+
+基本设置为 20 个数据 seed、5 类分布、1000 / 10000 / 100000 标签、公开整数值域 1..1000，Top-k 默认 k=3；盲测使用独立 seed 100..119。鲁棒性与盲测各有单独的分布 / 扰动组合，不等同于全部分布的笛卡尔积。
+
+| 实验集 | 目的 | 任务评价行 |
+| --- | --- | ---: |
+| `main` | 基线、共享、随机参数控制组与真实模型单次候选 | 8400 |
+| `ablation` | 去共享、无复核、固定 / 自适应复核 | 8400 |
+| `composite` | H1：均值、方差和在场基数共享采集 | 1800 |
+| `sensitivity` | H2：复核轮次和阈值 | 8400 |
+| `robustness` | 两类分布、三个规模、四类扰动 | 9600 |
+| `blind` | 独立数据与组合扰动 | 1440 |
+| **合计** | **任务评价记录，不是独立采集数或模型调用数** | **38040** |
+
+每个可比较的“协议×任务”在主实验中通常有 300 条评价，即 20 seeds × 5 分布 × 3 规模。单场景提供 95% CI、P95、最坏值与失败记录，跨场景总体均值仅作描述性汇总。
+
+### 关键结果与未达标条件
+
+| 项目 | 可核查结果 | 解释 |
+| --- | --- | --- |
+| 三任务共享费用 | 平均 37,160 bits，对照串联 111,480 bits，节省 2/3 | 相同测量原语与软件计费下的复用收益；同时报告预留槽开销 |
+| H1 联合验收 | **43/45** 个条件通过 | 长尾、100000 标签下，均值和在场基数的误差 CI 上界超过 5% |
+| H2 默认阈值 1 对固定 4 轮 | **3/15** 个条件通过 | 同时要求 F1 损失 CI 上界 ≤1 个百分点、通信节省 ≥20%；相近平均 F1 不等于通过 |
+| 一份真实模型候选 | 三个标量任务质量达标率均 93.33%；Top-k F1 0.6811、完整匹配达标率 35.67% | 执行成功与精度分别评价；不能据一份候选证明多代演化的普遍优势 |
+
+真实模型记录来自 **2026-10-29**，记录模型为 `gpt-6.1-sol`，一次实际响应共 187 tokens。20 个数据 seed 是同一冻结候选的重复数据评价，不是 20 次模型生成。复现此候选不重新调用模型。
+
+现有证据支持“复用采集可减少重复通信”的有限结论，尚不能宣称所有分布、规模均达标。发射 bits 少也可能伴随较大的预留 slots；本项目未将模拟计数写成硬件时延、能耗或 EPC C1G2 实测收益。
+
+### 文件入口与来源
+
+| 材料 | 用途 |
+| --- | --- |
+| [统计实验规格](docs/统计实验规格v1.md) | 任务、成本与假设门槛 |
+| [参考实验目录](code_add/Experiments/stat_protocols/README.md) | 六组原始结果与图表导航 |
+| [逐条件验收](code_add/Experiments/stat_protocols/hypotheses.json) | H1/H2 与未达标条件 |
+| [参考归档清单](code_add/Experiments/stat_protocols/manifest.json) | 归档写入时的版本、环境与来源 |
+| [历史机制索引](code_add/Experiments/stat_protocols/mechanism_inventory.json) | 源文件、机制线索和源码摘要 |
+| [真实候选](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json) | 参数、模型记录与用量 |
+| [实际 Prompt](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/prompt.txt) / [原始响应](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/response.txt) | 一次真实模型调用的证据 |
+| [2026-11-14 验证摘要](docs/verification/2026-11-14.json) | 当前源码摘要、190/9/15 项检查与本次正式复跑摘要 |
+
+仓库保留参考实验归档及其原始 manifest。2026-11-14 已在独立本地目录按更新后的源码复跑六组实验，核对了 46 个来源文件与 41 个产物；完整复跑文件保存在本机 `report_build/stat_protocols_verified/`，本次仓库发布摘要，不把摘要冒充完整原始归档。不同生成批次的源码摘要应分别核对。
+
+### 复现已保存候选
+
+在 `code_add` 目录执行，输出到新目录以保留参考归档：
 
 ```powershell
-Set-Location .\code_add
+python -m benchmark.suite `
+  --output-dir Experiments/reproduction_20261114 `
+  --seed-count 20 --sizes 1000,10000,100000 `
+  --llm-candidate Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json
+
+# 审计本次新输出的文件完整性与 reproducibility key。
+python -m benchmark.audit Experiments/reproduction_20261114
+```
+
+较小的开发烟测和配置化流水线：
+
+```powershell
+python -m benchmark.run_config --config benchmark/configs/smoke.json --output-dir Experiments/smoke_new
+python -m benchmark.pipeline --config benchmark/configs/engineering.json --output-dir Experiments/pipeline_new
+```
+
+烟测用于检查流程，不替代正式实验。更多参数与运行方式见[基准工程说明](code_add/benchmark/README.md)。
+
+## 测试与当前限制
+
+2026-11-14 当前源码完成以下检查，真实后端流程与模拟边界用例在测试中区分：
+
+| 检查 | 结果 |
+| --- | --- |
+| Python 编译、单元测试与临时 smoke | 190 项单元测试通过，一键验证退出 0 |
+| 前端单元测试 | 9 项通过 |
+| TypeScript 与 Vite 生产构建 | 通过 |
+| Playwright 浏览器用例 | 15 项通过 |
+| 桌面 / 移动布局 | 各 11 个路由，无页面脚本异常和整页横向溢出 |
+| 格式检查 | Windows CRLF 兼容参数下通过 |
+
+```powershell
+# code_add 目录：编译、全量 Python 测试、临时配置烟测。
 python -m tools.verify
+
+# code_add/course_project/frontend 目录。
+npm test
+npm run build
+npx prettier --check src tests *.ts *.json index.html --end-of-line auto
+
+# 先启动已构建新版的后端，再运行浏览器检查。
+npx playwright install chromium
+npm run test:e2e
 ```
 
-该命令会执行语法检查、全量单元测试和临时 smoke benchmark。配置化实验入口见 [`docs/通用接口与运行基线v1.md`](docs/通用接口与运行基线v1.md)，本轮结果见 [`docs/通用版本本轮完成报告.md`](docs/通用版本本轮完成报告.md)。
+本次一并发布两处运行兼容性修复：在候选文件审计启用前预加载受信任的 `numpy.ma`，以及处理无响应流的 `HTTPError`；全量测试等待上限调整为 600 秒。没有放宽候选文件 / 网络限制。
 
-## 2. 建议先走通的流程
+仍需关注的边界：
 
-1. 打开“场景与代码”，选择 `test` 场景，阅读 `ModeQuerySEM`、`ModeQueryTKQ` 等父代协议。
-2. 在“Prompt 与 AI”选择上述两个父代，点击“预览生成任务”，检查生成的 Prompt。
-3. 在“验证沙箱”选择 `ModeQuerySEM`，设置 60 个标签、2 次验证，查看检查结果。
-4. 在“自动迭代”填入 `ModeQuerySEM, ModeQueryTKQ, g2_2`，勾选“只预览迭代任务，不调用模型”，先体验两轮迭代。
-5. 在“实验产物”查看现有 CSV/JSON，在“实验分析”查看现有性能图。
-6. 需要真实生成时，在“Prompt 与 AI”配置模型地址、模型名和 API Key，检查模型连接后再生成协议。
+- 当前面向单机研究；公开部署前需补充认证、授权、多用户资源调度及更完整的系统隔离。
+- 受限子进程不能替代容器或完整操作系统沙箱，遗留兼容模式不能自动获得严格隔离保证。
+- 构建仍提示图表与组件公共分包大于 500 kB，后续可继续优化加载体积。
+- 任意任务需要相应真值与评价器才能量化准确率；多属性、连续值量化与完整 GRDL 编译链仍需扩展。
+- 真实 LLM 多候选、多代收益与硬件通信性能需要额外实验；现有单次生成记录不构成 H3 的充分证据。
 
-`test` 是场景目录名称；“任务画像”是统计目标。同一场景可以选择众数、均值、方差、分位数、基数或缺失盘点等任务画像。
-
-## 3. 各页面操作
-
-### 3.1 总览
-
-查看场景数、协议数量、Prompt 数量、产物和任务统计；下方展示世代分布与场景资产。点击左侧导航进入各工作区，点击“使用指南”查看当前页面说明。
-
-总览截图见本文件开头。
-
-### 3.2 场景与代码
-
-![场景选择、文件搜索和代码阅读](docs/screenshots/02-assets.png)
-
-1. 选择已有场景；需要新场景时，填写合法名称并点击“创建新场景”。
-2. 可以选择基线协议并复制到指定世代，例如 `generation_0`。
-3. 用关键词搜索文件；列表支持每页 8、16、32 项和上一页/下一页。
-4. 点击文件，右侧默认显示阅读预览。协议代码有行号和关键字高亮，长文件按页显示。
-5. 点击“编辑源文件”修改内容，再点击“保存当前文件”或按 `Ctrl+S`。有未保存内容时，切换文件会提示确认。
-6. 若保存提示文件已被其他操作修改，先重新读取并核对内容，再保存。
-
-### 3.3 Prompt 与 AI
-
-![单次协议生成、进度和 Prompt 预览](docs/screenshots/03-ai.png)
-
-1. 选择场景、任务画像和父代 A/B，必要时补充业务需求。
-2. 设置输出协议名、目标世代、修复轮数和验证标签数。
-3. **预览生成任务**：生成 Prompt 和目标路径，不调用模型，不创建子代 `.py` 文件。
-4. **生成协议代码**：实际调用配置的模型，生成代码并执行验证/自修复流程。
-5. 下方查看后台任务进度、日志和历史记录；任务结束后会展示本次生成的 Prompt 或协议。
-
-模型配置直接在页面填写 **API URL、API Key 和模型名**。例如使用 Pixel 时，URL 为 `https://ai-pixel.online/v1`，模型名填写该中转站支持的模型（当前示例为 `gpt-6.1-sol`），API Key 填写对应密钥。
-
-点击“检查模型是否可用”验证连接，或点击“列出可用模型”查看支持的模型名称。系统自动识别 Responses / Chat Completions 接口，无需填写 Endpoint Path 或设置环境变量。修改 URL、Key 或模型名后，下一次模型检查、生成或自动迭代立即使用新配置，无需重启服务；已提交的任务继续使用提交时的配置。
-
-API Key 仅在当前页面使用，不写入浏览器本地存储、配置文件或任务历史，刷新页面后需重新填写。自动迭代共用“Prompt 与 AI”页中的模型配置；预览生成和预览迭代不需要密钥，也不会调用模型。
-
-### 3.4 验证沙箱
-
-![协议检查、命中率和样本结果](docs/screenshots/04-validation.png)
-
-选择场景、协议、任务画像，设置标签数量、重复次数、数值范围和误差容忍度后，点击“验证协议”。
-
-结果包括硬约束检查、功能命中率、信息隔离检查和平均耗时；环图展示命中比例，样本卡片展示单次结果。展开“检查报告与原始结果”可进一步查看报告、样本和嵌套数据。
-
-### 3.5 自动迭代
-
-![父代池、迭代进度和逐轮结果](docs/screenshots/05-iteration.png)
-
-1. 选择场景、任务画像、协议前缀、迭代轮数、验证标签数和修复轮数。
-2. 填入逗号分隔的父代协议池，或使用“填入推荐父代池”。父代必须存在于当前可用资产中。
-3. 初次使用先勾选“只预览迭代任务，不调用模型”，再点击“启动自动迭代”。
-4. 查看阶段进度、运行日志和轮次表；通过“查看 Prompt / 查看协议”阅读对应资产。
-5. 需要真实生成时，先完成模型配置，再取消预览勾选并启动任务。
-
-预览模式下显示“未生成协议”是预期行为；此时可以查看 Prompt，但没有新的协议源文件。
-
-### 3.6 实验产物
-
-![CSV 表格、趋势图和资产下载](docs/screenshots/06-outputs.png)
-
-左侧集中展示平台和各场景 `outputs/` 中的产物。搜索文件名、路径或类型，点击“预览”后在右侧查看：
-
-| 类型 | 展示方式 |
-| --- | --- |
-| CSV | 每页 20 条记录、字段选择、当前页趋势图、可横向滚动的宽表 |
-| JSON | 按需展开对象和数组，也可以切换为 JSON 源文 |
-| Markdown / Prompt | 阅读排版和带行号文本，长文件支持翻页 |
-| Python / 日志 / 文本 | 行号与分页，Python 提供关键字高亮 |
-| PNG / JPG / WebP / SVG | 适应容器或查看原始尺寸 |
-| HTML / PDF | 内嵌报告或文档预览 |
-| 其他产物 | 提供原始文件下载 |
-
-点击“下载文件”可保存原文件。CSV 图表只绘制当前页有效数值；超过 1 MB 的 JSON 使用分页文本，超过 10 MB 的文本通过下载查看。
-
-### 3.7 实验分析
-
-![实验参数与性能图预览](docs/screenshots/07-experiments.png)
-
-上方设置来源场景、协议、任务画像和采样参数，可以运行鲁棒性实验、生成鲁棒性图、进化图或终稿图。实验结束后刷新产物列表，控制台显示命令、返回码和输出。
-
-下方的实验资产列表支持搜索和分页；点击“本页预览”查看图表、CSV、JSON 或报告。`Experiments/` 下的嵌套产物也会被扫描。
-
-### 3.8 统计基准
-
-“统计基准”是统计协议与算法实验的可视化入口。页面支持按主实验/消融实验、任务、数据分布和标签规模筛选，展示通信量—误差散点图、协议成功率、reader/tag bits、slots、frames、rounds 和失败数量。
-
-
-新增六组实验：主实验、共享/复核消融、H1三任务共享、H2复核与阈值敏感性、缺失/噪声/极端值、独立盲测。正式规格为20个seed、5个分布、1k/10k/100k；图中可切换bits/slots/rounds，点击协议名或图点可查看分页的逐seed真值、估计值、数据hash、轮次轨迹和失败原因。单场景展示95%CI，跨场景汇总明确标为描述性平均。
-
-页面的“主图与原始资产”会列出当前实验集的 JSON、CSV、PNG 和 PDF，点击资产名称即可在页面内预览；点击协议行或图点可展开分页的逐 seed 结果。验收清单、交付证据、机制基因表和复现命令集中在本 README 下文。
-
-![当前统计基准主视图](docs/screenshots/11-statistics.png)
-
-![当前 H2 复核与阈值敏感性](docs/screenshots/12-statistics-review.png)
-
-![当前真实候选逐 seed 详情](docs/screenshots/13-statistics-details.png)
-
-<img src="docs/screenshots/14-statistics-mobile.png" alt="当前统计基准窄屏布局" width="390" />
-
-直接访问：<http://127.0.0.1:8765/#statistics>。
-
-详细的[统计实验交付验收与演示](docs/统计实验交付验收.md)、[统计实验规格v1](docs/统计实验规格v1.md)、[自动算法与实验报告](code_add/Experiments/stat_protocols/统计实验报告.md)均已提供。软件模型的bits优势与预留slots代价同时报告；未达到H1/H2门槛的条件保留。
-
-点击“一键重跑正式实验”将在后台子进程生成整套结果，成功后发布新结果；不阻塞页面。真实LLM基线复用“Prompt与AI”的URL、Key和模型，点击“生成真实LLM随机候选”后再重跑，或者导入候选JSON。没有实际候选时显示待实测并保留失败原因，随机参数组不会冒充模型结果。网关未返回token用量时记为未知，不写0成本。
-
-当前交付已包含Pixel真实调用：gpt-6.1-sol，一次生成用量187 tokens。主实验中四任务各300条执行成功；Top-k平均F1为0.6811，完整匹配达标率35.67%，精度不足的结果全部保留。提示词、响应和候选证据通过下方 README 文件链接查看；网页保留候选状态并在统计摘要中显示模型信息。20个seed是同一候选的数据评价，不是20次模型生成；复现已保存候选无需密钥或再次调用模型。
-
-#### 3.8.1 统计实验验收
-
-当前交付共9项完成、1项待扩展验证。“完成”指代码与软件实验有可复现证据，不表示所有研究假设达到门槛；完整验收口径见[统计实验交付验收](docs/统计实验交付验收.md)。
-
-| 文档要求 | 状态 | 交付证据与边界 |
-| --- | --- | --- |
-| §5.3.1 / W1：历史协议机制基因表 | 已完成 | 143个世代文件索引、6类机制；源文件、行号与SHA-256可追溯 |
-| §5.3.2 / W3–4：共享采集与四任务 | 已完成 | `run_many`一次采集；均值、方差、在场标签数、Top-k共享`collection_id`，费用不跨任务重复相加 |
-| §5.3.3 / W2：通信成本模型 | 已完成软件模型 | 每帧广播、标签响应和预留空槽逐事件计数；保留reader/tag bits、slots、frames、rounds；无硬件时延结论 |
-| §5.3.4：Polling / 全识别 / 单任务基线 | 已完成 | 全识别为无碰撞乐观下界；单任务串联作为无共享消融 |
-| §5.3.4：真实LLM随机生成基线 | 已实测 | gpt-6.1-sol真实网关响应；一份冻结候选跨数据seed评价，保留Prompt/响应/候选记录 |
-| W6：固定 / 自适应复核与阈值 | 已完成 | 1/2/3/4帧、阈值0.5/1/2；逐seed配对H2，未达标结果保留；当前采用全帧复核 |
-| W7–8：规模、缺失、长尾和正式实验 | 已完成 | 20个seed、5分布、三个规模；缺失/噪声/极端值、独立盲测、95%CI/P95/最坏值 |
-| §5.3.5 / W8：主实验、消融与Pareto图 | 已完成 | 同任务内计算Pareto；失败或不可用候选排除出前沿，并保留原始失败记录 |
-| W9–10：算法章节、图表校对、交付 | 已完成 | 自动报告、机制表、H1/H2验收、复现命令、原始CSV/JSON及PNG/PDF |
-| 扩展验证接口 | 待扩展验证 | 演化选择、运行时沙箱和物理隔离不包含在本统计基准中；已提供白名单编译器和评价接口 |
-
-#### 3.8.2 交付文件与真实模型证据
-
-| 文件 | 用途 |
-| --- | --- |
-| [hypotheses.json](code_add/Experiments/stat_protocols/hypotheses.json) | H1/H2逐条件结果、配对统计及未达标条件 |
-| [manifest.json](code_add/Experiments/stat_protocols/manifest.json) | 执行环境、源码SHA-256、实验规格、真实候选与运行行数 |
-| [mechanism_inventory.json](code_add/Experiments/stat_protocols/mechanism_inventory.json) | 历史机制、世代文件索引与完整hash |
-| [实验目录README](code_add/Experiments/stat_protocols/README.md) | 六组实验的文件导航与结果口径 |
-| [统计实验报告](code_add/Experiments/stat_protocols/统计实验报告.md) | 算法、成本模型、实验观察与局限 |
-| [LLM · candidate.json](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json) | 真实候选参数、模型、usage、Prompt/响应hash |
-| [LLM · prompt.txt](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/prompt.txt) | 实际发送的提示词 |
-| [LLM · response.txt](code_add/Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/response.txt) | 模型原始响应 |
-
-#### 3.8.3 历史协议机制基因表
-
-当前交付索引143个历史世代文件；关键词只用于定位，不构成正确性或隐私证明。完整文件hash和`tracked`标记见上方机制索引文件。
-
-| 机制 | 来源 | 复用决策 |
-| --- | --- | --- |
-| 逐值精确计数与静默 | [ModeQueryEE.py:48](code_add/base_protocol/ModeQueryEE.py#L48) | 保留历史计数机制，不将原自报时间带入新基准 |
-| 全识别 | [ModeQueryID.py:7](code_add/base_protocol/ModeQueryID.py#L7) | 新基准明确采用无碰撞乐观下界 |
-| SEM位平面并行与零槽估计 | [ModeQuerySEM.py:68](code_add/base_protocol/ModeQuerySEM.py#L68) | 复用匿名占用位图与零槽反演；逐事件记录发射bits和预留slots |
-| 碰撞/占用利用 | [ModeQueryTCS.py:55](code_add/base_protocol/ModeQueryTCS.py#L55) | 从非空槽排序扩展为有限帧计数反演；保留桶饱和等负结果 |
-| SOG与多轮融合 | [ModeQueryTKQ.py:22](code_add/base_protocol/ModeQueryTKQ.py#L22) | 复用多轮独立测量思想，未声称实现SOG硬件 |
-| 早停、置信差与候选复核 | [test_g3_1.py:124](code_add/test/generation_3/test_g3_1.py#L124) | 复用不确定性驱动思想；当前采用全帧复核，定向单值复核留作扩展 |
-
-#### 3.8.4 复现实验命令
-
-在仓库根目录打开终端，运行以下命令可复现已保存真实候选的正式实验，不会再次调用模型：
-
-```powershell
-cd code_add
-python -m benchmark.suite --llm-candidate Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json --output-dir Experiments/stat_protocols
-```
-
-### 3.9 审计
-
-![模型配置状态与 AI 任务记录](docs/screenshots/08-audit.png)
-
-查看 SQLite 中的运行统计、模型环境配置状态和最近 AI 任务记录。`预览` 表示只生成了 Prompt；实际生成任务需结合状态和协议文件判断结果。
-
-审计数据在本机持久化，后台任务队列保存在服务进程内；重启服务后，原后台队列不能继续执行或轮询。
-
-## 4. 手动上传本地文件
-
-![本地文件导入入口](docs/screenshots/10-upload.png)
-
-“场景与代码”“实验产物”“实验分析”页面顶部均有“导入本地文件”。展开后选择文件或拖放到上传区，点击“开始上传”。
-
-| 页面 / 导入类型 | 保存位置 | 文件要求 |
-| --- | --- | --- |
-| 场景与代码 / 协议 | 当前场景指定的 `generation*` 目录 | `.py`，名称由英文字母、数字、下划线组成，不能以数字开头 |
-| 场景与代码 / Prompt | 当前场景 `prompts/` | `.txt` |
-| 场景与代码 / 场景输出 | 当前场景 `outputs/uploads/` | 支持的数据、文本、图片或报告 |
-| 实验产物 | `code_add/course_project/outputs/uploads/` | CSV、JSON、MD、TXT、LOG、HTML、PDF、PNG、JPG、JPEG、WebP、SVG |
-| 实验分析 | `code_add/Experiments/uploads/` | 同上 |
-
-每个文件最多 **10 MB**，每批最多 **10 个**；文本需使用 **UTF-8** 编码，JSON 需符合格式。同名文件会拒绝覆盖，需重命名后重传。导入协议仅保存文件，后续运行由验证或实验操作触发。
-
-## 5. 手机与窄屏
-
-窄屏自动切换为单列工作区，顶部导航可横向滚动。宽数据表在自己的容器中滚动，文件列表和长文本通过分页查看。
-
-<img src="docs/screenshots/09-mobile.png" alt="390 像素宽度下的实验产物页面" width="390" />
-
-## 6. 项目文件架构
-
-下图省略大部分历史协议和数据文件；`uploads/`、运行数据库等目录或文件按需生成。
+## 项目文件架构
 
 ```text
 rfid/
-├─ README.md                         # 本图文操作指南
-├─ .gitignore                        # 忽略虚拟环境、缓存、数据库和本地密钥
+├─ README.md                         # 当前 Vue 版图文指南与项目介绍
+├─ requirements.txt                 # Python 依赖范围
 ├─ docs/
-│  ├─ screenshots/                   # 10 个工作区与上传截图、4 个当前统计基准视图
-│  ├─ 统计实验交付验收.md           # 逐项对照与3分钟演示
-│  └─ 统计实验规格v1.md               # 指标、成本、假设与共同接口口径
-├─ code_add/                         # 应用工作目录
-│  ├─ README.md                      # 项目简介与启动说明
-│  ├─ base.py                        # Tag / 协议基础接口
-│  ├─ Validator.py                   # 物理约束等协议检查
-│  ├─ Test.py                        # 命令行批量测试
-│  ├─ prompt_generation.py           # 父代协议读取与 Prompt 构造
-│  ├─ ai_protocol_optimizer.py       # 模型生成、修复与协议落盘
-│  ├─ backend_tools/
-│  │  ├─ openai_compatible.py        # 模型 HTTP 客户端
-│  │  └─ protocol_metrics.py         # 协议指标归一化
-│  ├─ stat_protocols/                # 四任务共享草图、匿名通道、基线与成本契约
-│  ├─ benchmark/                     # 正式/消融/复核/鲁棒/盲测与一键suite
-│  ├─ course_project/
-│  │  ├─ README.md                   # API、实现和运行约定
-│  │  ├─ web_app.py                  # HTTP 路由与工作流编排
-│  │  ├─ http_support.py             # 请求/响应边界与统一错误
-│  │  ├─ validation.py               # 数值范围与布尔参数校验
-│  │  ├─ jobs.py                     # 有界后台队列与进度快照
-│  │  ├─ assets.py                   # 上传校验、有界文本与数据预览
-│  │  ├─ statistics_service.py       # 统计查询、真实LLM候选、子进程实验发布
-│  │  ├─ database.py                 # SQLite 审计与任务记录
-│  │  ├─ selfopt_ui.py               # HTML 导出兼容入口
-│  │  ├─ test_course_project.py       # 核心工作流测试
-│  │  ├─ test_infrastructure.py       # HTTP、上传、编辑与任务边界测试
-│  │  ├─ static/
-│  │  │  ├─ index.html               # 页面结构
-│  │  │  ├─ app.css                  # 工作台视觉样式
-│  │  │  ├─ app.js                   # 场景、生成、验证、实验交互
-│  │  │  ├─ assets.css               # 资产预览和响应式细节
-│  │  │  ├─ statistics.js            # 统计/Pareto交互、逐seed证据与基线入口
-│  │  │  └─ asset_ui.js              # 分页、分类预览和上传组件
-│  │  └─ outputs/                    # 平台运行产物与 uploads/
-│  ├─ base_protocol/                # 可复用基础协议
-│  ├─ test/                         # 推荐先体验的测试场景
-│  │  ├─ Task.py                    # 场景标签生成
-│  │  ├─ generation_0/              # 父代协议
-│  │  ├─ generation_1/ ...          # 后续世代协议
-│  │  ├─ prompts/                   # 生成或导入的 Prompt
-│  │  └─ outputs/                   # 对比数据与运行结果
-│  ├─ ManyTags/                     # 多标签场景
-│  ├─ multi_mode/                   # 多众数场景
-│  ├─ single_mode/                  # 单众数场景
-│  ├─ rfid_mode_finding_v1/          # 历史场景
-│  ├─ ss/                           # 历史场景
-│  └─ Experiments/                  # 鲁棒性实验、绘图脚本与结果
-├─ 周报1.pdf                         # 既有项目资料
-└─ 用户手册3.docx                    # 既有项目资料
+│  ├─ screenshots/vue/              # 本版页面截图与摘要清单
+│  ├─ reports/                      # 融合版结题报告 Word / PDF 与核对说明
+│  ├─ verification/                 # 当前检查与正式复跑摘要
+│  └─ 统计实验规格v1.md             # 任务、成本与实验门槛
+└─ code_add/                        # Python 命令的工作目录
+   ├─ base.py / Validator.py         # 标签、协议接口与物理约束
+   ├─ prompt_generation.py          # 父代读取及 Prompt 构造
+   ├─ ai_protocol_optimizer.py      # 模型生成、自修复及候选记录
+   ├─ backend_tools/                # OpenAI 兼容客户端与指标归一化
+   ├─ generic_tasks/                # 任务注册、语义范围与数据契约
+   ├─ generic_protocol/             # 适配、计量通道、严格验证与子进程
+   ├─ stat_protocols/               # 匿名信道、共享草图、复核与基线
+   ├─ benchmark/                    # 配置实验、正式套件、盲测和完整性审计
+   ├─ tools/verify.py               # 一键编译、测试与烟测
+   ├─ course_project/
+   │  ├─ web_app.py                 # HTTP 路由与工作流编排
+   │  ├─ http_support.py            # 请求与响应边界
+   │  ├─ jobs.py / database.py      # 有界队列、任务快照与 SQLite
+   │  ├─ assets.py                  # 导入、预览、下载和版本保存
+   │  ├─ workspace_service.py       # 研究任务与配置版本
+   │  ├─ research_service.py        # 冻结候选与跨场景评测
+   │  ├─ evolution_selection.py     # 非支配分层、拥挤度与结构去重
+   │  ├─ statistics_service.py      # 统计比较与实验发布
+   │  ├─ frontend/
+   │  │  ├─ src/views/              # 11 个 Vue 页面
+   │  │  ├─ src/components/         # 模型、任务、证据、资产与图表组件
+   │  │  ├─ src/stores/             # 场景、模型内存与后台任务状态
+   │  │  ├─ tests/                  # 前端单元与浏览器测试
+   │  │  ├─ package-lock.json       # 前端依赖锁文件
+   │  │  └─ dist/                   # 本机构建产物，Git 忽略
+   │  ├─ static/                   # /legacy 兼容前端
+   │  └─ outputs/                  # 本地数据库、任务、候选及运行产物
+   ├─ base_protocol/                # 历史基线协议
+   ├─ test/、multi_mode/ 等          # Task.py、世代协议、Prompt 与场景 Outputs
+   └─ Experiments/
+      ├─ stat_protocols/            # 参考统计归档、六组数据与真实模型记录
+      └─ ...                        # 原有实验脚本与绘图资产
 ```
 
-请求从 `web_app.py` 进入，经参数校验后调度资产、协议或实验逻辑；AI/迭代任务由 `jobs.py` 管理，历史写入 SQLite。前端通过 HTTP API 读取状态和资产，代码不需要打包编译。
+前端通过 HTTP API 提交任务；后端验证参数后调度资产、协议与实验服务，后台队列维护进度，SQLite 和结果文件保存历史。源码保存、候选冻结、配置版本与数据 hash 共同保证结果可以追溯到实际输入。
 
-更完整的接口和运行约定见 [开发说明](code_add/course_project/README.md)。当前服务面向本机实验使用，协议执行还没有容器级隔离。
-
-## 7. 本地检查
-
-在 `code_add` 目录运行：
-
-```powershell
-python -m unittest course_project.test_infrastructure course_project.test_course_project
-```
-
-使用上述虚拟环境时，将 `python` 替换为 `..\.venv\Scripts\python.exe`。测试覆盖上传、预览分页、下载、文件冲突、参数验证、后台队列和核心工作流。模型配置与接口自动识别检查见下方命令；测试使用本地模拟网关，不会调用付费模型。
-
-```powershell
-python -m unittest course_project.test_ai_configuration
-```
-
-统计协议与Web统计服务的完整回归：
-
-```powershell
-python -m unittest course_project.test_statistics_service course_project.test_stat_protocols course_project.test_ai_configuration course_project.test_infrastructure course_project.test_course_project -q
-```
+[平台 API 与运行约定](code_add/course_project/README.md) · [前端开发与构建](code_add/course_project/frontend/README.md) · [统计协议](code_add/stat_protocols/README.md) · [基准与复现](code_add/benchmark/README.md)

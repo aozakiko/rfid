@@ -1,6 +1,6 @@
 # 统计实验交付目录
 
-查看[算法与实验报告](统计实验报告.md)和[逐项验收](../../../docs/统计实验交付验收.md)。Web：<http://127.0.0.1:8765/#statistics>。
+本目录是参考实验归档，保留其原始生成来源。当前代码检查与 2026-11-14 独立复跑摘要见[验证记录](../../../docs/verification/2026-11-14.json)，新版操作见[仓库首页](../../../README.md)。Web：<http://127.0.0.1:8765/#/statistics>。
 
 | 目录/文件 | 内容 |
 | --- | --- |
@@ -22,7 +22,8 @@
 
 ```powershell
 cd code_add
-python -m benchmark.suite --llm-candidate Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json --output-dir Experiments/stat_protocols
+python -m benchmark.suite --llm-candidate Experiments/stat_protocols/llm/290537f3a8314c0b933ce4063b95f79f/candidate.json --output-dir Experiments/reproduction_20261114 --seed-count 20 --sizes 1000,10000,100000
+python -m benchmark.audit Experiments/reproduction_20261114
 ```
 
 软件仿真不代表射频硬件实测。共享采集费用只记一次，不跨任务行重复求和；实际发射bits与所有预留slots都须报告。真实LLM缺少记录时明确待实测，不以随机参数替代。Web重跑结果按 `runs/<运行ID>/` 保存，成功后用latest.json发布。
