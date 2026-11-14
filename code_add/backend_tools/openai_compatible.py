@@ -223,7 +223,10 @@ class OpenAICompatibleClient:
                     raw_body = resp.read().decode("utf-8")
                 break
             except error.HTTPError as exc:
-                err_body = exc.read().decode("utf-8", errors="replace").replace(self.config.api_key, "[redacted]")
+                # HTTPError may have no response stream (including Python 3.9
+                # transport adapters). Keep its status usable for fallback.
+                raw_error = exc.read() if exc.fp is not None else b""
+                err_body = (raw_error or b"").decode("utf-8", errors="replace").replace(self.config.api_key, "[redacted]")
                 should_retry = self._should_retry_http_error(exc.code, err_body, attempt)
                 last_error = LLMClientError(f"HTTP {exc.code} 调用失败，已尝试 {attempt}/{self.config.retry_attempts}: {err_body}", status_code=exc.code)
                 if should_retry:

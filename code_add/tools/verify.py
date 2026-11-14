@@ -98,7 +98,7 @@ def verify(*, run_unittests: bool = True) -> int:
         return code
 
     if run_unittests:
-        code = _run([sys.executable, "-m", "unittest", "discover", "-s", "course_project", "-p", "test*.py", "-v"])
+        code = _run([sys.executable, "-m", "unittest", "discover", "-s", "course_project", "-p", "test*.py", "-v"], timeout=600)
         if code != 0:
             return code
 

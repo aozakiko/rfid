@@ -152,6 +152,9 @@ def main() -> int:
         seed = int((request.get("spec") or {}).get("seed", 0))
         random.seed(seed)
         import numpy as np
+        # NumPy 2.x loads masked-array support lazily from np.unique. Load
+        # this trusted channel dependency before the candidate's file guard.
+        import numpy.ma
         np.random.seed(seed % (2 ** 32))
         from generic_protocol.measured_channel import create_channel
         # Construct before executing untrusted code or installing its audit hook.
